@@ -265,7 +265,7 @@ jobs:
               @Test fun actionArbiterWaitsForUnstableMarker() {
                   val s=AccountState(screen=ScreenType.WORLD,confidence=.95f,miniMapDirection=80f,markerConfidence=.9f,markerStable=false)
                   val a=ActionArbiter.choose(s,Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"test"))
-                  assertNotEquals(AgentActionType.NAVIGATE,a.type)
+                  assertNotEquals(AgentActionType.MOVE_FORWARD,a.type)
               }
 
               @Test fun semanticDetectorFindsRightSideInteractionPrompt() {
