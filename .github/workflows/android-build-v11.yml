@@ -1,4 +1,4 @@
-name: Build Genshin Autopilot v1.1
+name: Build Genshin Autopilot v1.1.1
 
 on:
   push:
@@ -62,8 +62,8 @@ jobs:
                   applicationId = "com.seondwaeji.genshinautopilot"
                   minSdk = 31
                   targetSdk = 35
-                  versionCode = 11
-                  versionName = "1.1.0"
+                  versionCode = 12
+                  versionName = "1.1.1"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -82,6 +82,9 @@ jobs:
           cat > app/src/main/AndroidManifest.xml <<'EOT'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <queries>
+                  <package android:name="com.miHoYo.GenshinImpact" />
+              </queries>
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -114,7 +117,7 @@ jobs:
 
           cat > app/src/main/res/values/strings.xml <<'EOT'
           <resources>
-              <string name="app_name">Genshin AutoPilot v1.1</string>
+              <string name="app_name">Genshin AutoPilot v1.1.1</string>
               <string name="accessibility_description">Executes user-enabled gestures for the selected AutoPilot goal.</string>
           </resources>
           EOT
@@ -222,6 +225,13 @@ jobs:
                   assertEquals(CombatAction.DODGE, CombatPolicy.choose(hpPercent=20, burstReady=true, skillReady=true))
                   assertEquals(CombatAction.BURST, CombatPolicy.choose(hpPercent=90, burstReady=true, skillReady=true))
               }
+
+              @Test fun runPolicyRequiresCaptureAndNotPaused() {
+                  assertFalse(AgentRunPolicy.shouldRun(false,false,AgentMode.AUTOPLAY))
+                  assertFalse(AgentRunPolicy.shouldRun(true,true,AgentMode.AUTOPLAY))
+                  assertFalse(AgentRunPolicy.shouldRun(true,false,AgentMode.PAUSED))
+                  assertTrue(AgentRunPolicy.shouldRun(true,false,AgentMode.AUTOPLAY))
+              }
           }
           EOT
 
@@ -302,6 +312,9 @@ jobs:
               @Volatile var lastAction="Idle"
               @Volatile var sessionStarted=0L
               @Volatile var currentGoalText=""
+              @Volatile var captureActive=false
+              @Volatile var userPaused=false
+              @Volatile var pendingAutostart=false
           }
           EOT
 
@@ -428,6 +441,11 @@ jobs:
           object LongRunGuard {
               fun canContinue(batteryPercent:Int,thermalSevere:Boolean):Boolean = batteryPercent>=20 && !thermalSevere
           }
+
+          object AgentRunPolicy {
+              fun shouldRun(captureActive:Boolean,userPaused:Boolean,mode:AgentMode):Boolean =
+                  captureActive && !userPaused && mode!=AgentMode.PAUSED && mode!=AgentMode.COMPLETE
+          }
           EOT
 
           cat > app/src/main/java/com/seondwaeji/genshinautopilot/ScreenInterpreter.kt <<'EOT'
@@ -551,9 +569,22 @@ jobs:
                   val now=System.currentTimeMillis()
                   if(now-lastTick<650)return
                   lastTick=now
+                  if(RuntimeState.userPaused) {
+                      RuntimeState.mode=AgentMode.PAUSED
+                      RuntimeState.lastAction="사용자 일시정지"
+                      return
+                  }
                   val s=RuntimeState.account
                   val d=GoalPlanner.next(s,RuntimeState.parsedGoal)
                   RuntimeState.mode=d.mode
+                  if(d.mode==AgentMode.COMPLETE) {
+                      RuntimeState.lastAction="목표 완료 — 자동 정지"
+                      return
+                  }
+                  if(!RuntimeState.captureActive) {
+                      RuntimeState.lastAction="화면 캡처 대기"
+                      return
+                  }
 
                   if(!ActionGate.canAct(s,RuntimeState.dryRun)) {
                       RuntimeState.lastAction=d.reason+" [관찰 모드]"
@@ -661,7 +692,7 @@ jobs:
 
               override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
                   startForeground(11,Notification.Builder(this,"ga11")
-                      .setContentTitle("Genshin AutoPilot v1.1")
+                      .setContentTitle("Genshin AutoPilot v1.1.1")
                       .setContentText("Goal 분석 / 계정 스캔 / AutoPilot 실행 중")
                       .setSmallIcon(android.R.drawable.ic_media_play).build())
 
@@ -669,7 +700,14 @@ jobs:
                   val data=intent.getParcelableExtra<Intent>("data")?:return START_NOT_STICKY
                   val mpm=getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                   val projection=mpm.getMediaProjection(code,data)
-                  projection.registerCallback(object:MediaProjection.Callback(){override fun onStop(){reader?.close();reader=null}},Handler(Looper.getMainLooper()))
+                  RuntimeState.captureActive=true
+                  projection.registerCallback(object:MediaProjection.Callback(){
+                      override fun onStop(){
+                          reader?.close();reader=null
+                          RuntimeState.captureActive=false
+                          RuntimeState.lastAction="화면 캡처 종료"
+                      }
+                  },Handler(Looper.getMainLooper()))
                   val dm=resources.displayMetrics
                   reader=ImageReader.newInstance(dm.widthPixels,dm.heightPixels,PixelFormat.RGBA_8888,2)
                   projection.createVirtualDisplay("GA11",dm.widthPixels,dm.heightPixels,dm.densityDpi,
@@ -723,7 +761,19 @@ jobs:
                       startForegroundService(Intent(this,CaptureService::class.java)
                           .putExtra("resultCode",r.resultCode).putExtra("data",r.data))
                       RuntimeState.sessionStarted=System.currentTimeMillis()
-                      toast("화면 분석 시작")
+                      RuntimeState.captureActive=true
+                      RuntimeState.userPaused=false
+                      RuntimeState.dryRun=false
+                      RuntimeState.mode=AgentMode.AUTOPLAY
+                      RuntimeState.pendingAutostart=false
+                      RuntimeState.lastAction="AutoPilot 시작 — 첫 화면 분석 대기"
+                      toast("AutoPilot 시작됨")
+                      refresh()
+                      window.decorView.postDelayed({ launchGenshin() },700)
+                  } else {
+                      RuntimeState.pendingAutostart=false
+                      RuntimeState.lastAction="화면 공유 권한이 거부됨"
+                      toast("화면 공유 권한이 필요해")
                       refresh()
                   }
               }
@@ -749,7 +799,7 @@ jobs:
                   })
 
                   root.addView(TextView(this).apply {
-                      setTextColor(textColor);textSize=26f;text="GENSHIN AUTOPILOT  •  v1.1"
+                      setTextColor(textColor);textSize=26f;text="GENSHIN AUTOPILOT  •  v1.1.1"
                       setPadding(4,8,4,8)
                   })
                   root.addView(TextView(this).apply {
@@ -781,20 +831,84 @@ jobs:
                   }
                   root.addView(status,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=12})
 
-                  root.addView(button("1. 접근성 서비스 열기",Color.rgb(51,59,92)){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))})
-                  root.addView(button("2. 화면 스캔 시작",Color.rgb(51,59,92)){startScan()})
+                  root.addView(button("▶ AUTOPILOT START",accent){startAutopilot()})
+                  root.addView(button("접근성 설정",Color.rgb(51,59,92)){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))})
+                  root.addView(button("화면 스캔만 시작",Color.rgb(51,59,92)){startScanOnly()})
                   root.addView(button("DRY RUN ON / OFF",Color.rgb(51,59,92)){RuntimeState.dryRun=!RuntimeState.dryRun;refresh()})
-                  root.addView(button("AUTOPILOT START / TICK",accent){analyzeGoal();AgentController.tick();refresh()})
-                  root.addView(button("PAUSE / EMERGENCY STOP",Color.rgb(120,46,66)){RuntimeState.mode=AgentMode.PAUSED;RuntimeState.dryRun=true;refresh()})
+                  root.addView(button("■ EMERGENCY STOP",Color.rgb(120,46,66)){emergencyStop()})
 
                   setContentView(ScrollView(this).apply{addView(root)})
                   analyzeGoal()
               }
 
-              private fun startScan() {
+              override fun onResume() {
+                  super.onResume()
+                  if(RuntimeState.pendingAutostart && isAccessibilityReady()) {
+                      RuntimeState.pendingAutostart=false
+                      requestCaptureForAutoplay()
+                  }
+                  if(::status.isInitialized) refresh()
+              }
+
+              private fun isAccessibilityReady():Boolean {
+                  if(AutopilotAccessibilityService.instance!=null) return true
+                  val enabled=Settings.Secure.getString(contentResolver,Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+                  val mine=ComponentName(this,AutopilotAccessibilityService::class.java).flattenToString()
+                  return enabled.split(':').any{it.equals(mine,ignoreCase=true)}
+              }
+
+              private fun startAutopilot() {
                   analyzeGoal()
+                  RuntimeState.userPaused=false
+                  RuntimeState.pendingAutostart=true
+                  if(!isAccessibilityReady()) {
+                      RuntimeState.lastAction="접근성 권한 대기"
+                      toast("접근성을 켜고 돌아오면 자동으로 계속할게")
+                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                      refresh()
+                      return
+                  }
+                  requestCaptureForAutoplay()
+              }
+
+              private fun requestCaptureForAutoplay() {
+                  RuntimeState.pendingAutostart=false
+                  RuntimeState.dryRun=false
+                  RuntimeState.userPaused=false
+                  RuntimeState.lastAction="화면 공유 권한 대기"
                   val mpm=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                   captureLauncher.launch(mpm.createScreenCaptureIntent())
+                  refresh()
+              }
+
+              private fun startScanOnly() {
+                  analyzeGoal()
+                  RuntimeState.dryRun=true
+                  RuntimeState.userPaused=false
+                  val mpm=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  captureLauncher.launch(mpm.createScreenCaptureIntent())
+              }
+
+              private fun emergencyStop() {
+                  RuntimeState.userPaused=true
+                  RuntimeState.pendingAutostart=false
+                  RuntimeState.mode=AgentMode.PAUSED
+                  RuntimeState.dryRun=true
+                  RuntimeState.captureActive=false
+                  stopService(Intent(this,CaptureService::class.java))
+                  RuntimeState.lastAction="EMERGENCY STOP — 자동 입력 정지"
+                  toast("AutoPilot 정지")
+                  refresh()
+              }
+
+              private fun launchGenshin() {
+                  val intent=packageManager.getLaunchIntentForPackage("com.miHoYo.GenshinImpact")
+                  if(intent!=null) {
+                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                      startActivity(intent)
+                  } else {
+                      toast("원신 실행은 직접 해줘 — AutoPilot은 계속 대기 중")
+                  }
               }
 
               private fun analyzeGoal() {
@@ -827,6 +941,8 @@ jobs:
                       "\nMARKER "+(s.miniMapDirection?:"?")+
                       "\nPRIMOGEMS "+(s.primogems?:"?")+"   MORA "+(s.mora?:"?")+"   RESIN "+(s.resin?:"?")+
                       "\nPARTY ADVICE "+party.joinToString(" / ")+
+                      "\nCAPTURE "+RuntimeState.captureActive+
+                      "   PAUSED "+RuntimeState.userPaused+
                       "\nDRY RUN "+RuntimeState.dryRun+
                       "\nLAST  "+RuntimeState.lastAction+
                       "\n\nWISH / PRIMOGEM SPENDING: LOCKED BY DEFAULT"
@@ -863,7 +979,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GenshinAutopilot-v1.1-debug-apk
+          name: GenshinAutopilot-v1.1.1-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
           if-no-files-found: error
