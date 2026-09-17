@@ -1,0 +1,521 @@
+name: Build Genshin Autopilot v0.5
+
+on:
+  push:
+    branches: [ v0.5 ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate Android project
+        shell: bash
+        run: |
+          rm -rf app settings.gradle.kts build.gradle.kts gradle.properties
+          mkdir -p app/src/main/java/com/seondwaeji/genshinautopilot
+          mkdir -p app/src/test/java/com/seondwaeji/genshinautopilot
+          mkdir -p app/src/main/res/xml app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOT'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "GenshinAutopilot"
+          include(":app")
+          EOT
+
+          cat > build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOT
+
+          cat > gradle.properties <<'EOT'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOT
+
+          cat > app/build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.seondwaeji.genshinautopilot"
+              compileSdk = 35
+              defaultConfig {
+                  applicationId = "com.seondwaeji.genshinautopilot"
+                  minSdk = 31
+                  targetSdk = 35
+                  versionCode = 5
+                  versionName = "0.5.0"
+                  testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+
+          dependencies {
+              testImplementation("junit:junit:4.13.2")
+          }
+          EOT
+
+          cat > app/src/main/res/values/strings.xml <<'EOT'
+          <resources>
+              <string name="app_name">Genshin Autopilot</string>
+              <string name="accessibility_description">Performs touch gestures only while Autopilot execution mode is enabled.</string>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/values/themes.xml <<'EOT'
+          <resources>
+              <style name="Theme.GenshinAutopilot" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#455A64</item>
+              </style>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:description="@string/accessibility_description"
+              android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:notificationTimeout="100"
+              android:canPerformGestures="true"
+              android:canRetrieveWindowContent="true" />
+          EOT
+
+          cat > app/src/main/AndroidManifest.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <application android:allowBackup="true" android:label="@string/app_name" android:theme="@style/Theme.GenshinAutopilot">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service android:name=".AutopilotAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="false">
+                      <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+                      <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service_config" />
+                  </service>
+                  <service android:name=".ScreenCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
+                  <service android:name=".OverlayService" android:exported="false" />
+              </application>
+          </manifest>
+          EOT
+
+          # TESTS FIRST
+          cat > app/src/test/java/com/seondwaeji/genshinautopilot/PlannerEngineTest.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import org.junit.Assert.assertEquals
+          import org.junit.Assert.assertFalse
+          import org.junit.Test
+
+          class PlannerEngineTest {
+              @Test fun `unknown screen pauses instead of touching`() {
+                  val d = PlannerEngine().decide(GameState(screen = ScreenType.UNKNOWN, confidence = 0.2f))
+                  assertEquals(ActionType.WAIT, d.action)
+              }
+
+              @Test fun `dialogue becomes next dialogue action`() {
+                  val d = PlannerEngine().decide(GameState(screen = ScreenType.DIALOGUE, confidence = 0.9f))
+                  assertEquals(ActionType.DIALOGUE_NEXT, d.action)
+              }
+
+              @Test fun `resource policy locks premium wishes`() {
+                  val policy = ResourcePolicy()
+                  assertFalse(policy.canSpendPrimogems)
+                  assertFalse(policy.canSpendIntertwinedFates)
+                  assertFalse(policy.autoWishEnabled)
+              }
+
+              @Test fun `quest route targets act two after act one`() {
+                  val state = GameState(adventureRank = 18, mondstadtPrologueComplete = true, snezhnayaAct1Complete = true)
+                  assertEquals(MissionStage.SNEZHNAYA_ACT_2, MissionPlanner.nextStage(state))
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AgentModels.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          enum class ScreenType { WORLD, DIALOGUE, QUEST_MENU, MAP, CHARACTER_MENU, PARTY_MENU, BATTLE, CUTSCENE, LOADING, DEATH, REWARD, UNKNOWN }
+          enum class MissionStage { MONDSTADT_PROLOGUE, REACH_AR18, SNEZHNAYA_TRAVEL, SNEZHNAYA_ACT_1, SNEZHNAYA_ACT_2, COMPLETE }
+          enum class ActionType { WAIT, OPEN_QUEST, MOVE_FORWARD, INTERACT, DIALOGUE_NEXT, BASIC_ATTACK, DODGE, RECOVER, STOP }
+
+          data class GameState(
+              val screen: ScreenType = ScreenType.UNKNOWN,
+              val confidence: Float = 0f,
+              val adventureRank: Int? = null,
+              val mondstadtPrologueComplete: Boolean = false,
+              val snezhnayaUnlocked: Boolean = false,
+              val snezhnayaAct1Complete: Boolean = false,
+              val snezhnayaAct2Complete: Boolean = false,
+              val hpRatio: Float = 1f,
+              val questDistanceMeters: Int? = null,
+              val dryRun: Boolean = true,
+              val lastAction: ActionType = ActionType.WAIT,
+              val failureCount: Int = 0
+          )
+
+          data class AgentDecision(val action: ActionType, val reason: String, val requiredConfidence: Float = 0.75f)
+
+          object AgentState {
+              @Volatile var current = GameState()
+              @Volatile var running = false
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/MissionPlanner.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          object MissionPlanner {
+              fun nextStage(s: GameState): MissionStage = when {
+                  s.snezhnayaAct2Complete -> MissionStage.COMPLETE
+                  s.snezhnayaAct1Complete -> MissionStage.SNEZHNAYA_ACT_2
+                  s.snezhnayaUnlocked -> MissionStage.SNEZHNAYA_ACT_1
+                  s.mondstadtPrologueComplete && (s.adventureRank ?: 0) >= 18 -> MissionStage.SNEZHNAYA_TRAVEL
+                  s.mondstadtPrologueComplete -> MissionStage.REACH_AR18
+                  else -> MissionStage.MONDSTADT_PROLOGUE
+              }
+          }
+
+          class PlannerEngine {
+              fun decide(s: GameState): AgentDecision {
+                  if (s.confidence < 0.60f || s.screen == ScreenType.UNKNOWN) return AgentDecision(ActionType.WAIT, "Low-confidence screen; re-observe", 0f)
+                  if (s.failureCount >= 4) return AgentDecision(ActionType.RECOVER, "Repeated failures; recovery", 0.65f)
+                  return when (s.screen) {
+                      ScreenType.DIALOGUE -> AgentDecision(ActionType.DIALOGUE_NEXT, "Continue quest dialogue", 0.72f)
+                      ScreenType.BATTLE -> if (s.hpRatio < 0.30f) AgentDecision(ActionType.DODGE, "Low HP") else AgentDecision(ActionType.BASIC_ATTACK, "Basic combat")
+                      ScreenType.WORLD -> AgentDecision(ActionType.MOVE_FORWARD, "Follow tracked objective", 0.78f)
+                      ScreenType.QUEST_MENU -> AgentDecision(ActionType.INTERACT, "Track highest-priority Archon quest", 0.80f)
+                      ScreenType.DEATH -> AgentDecision(ActionType.RECOVER, "Recover from death", 0.80f)
+                      ScreenType.LOADING, ScreenType.CUTSCENE -> AgentDecision(ActionType.WAIT, "Wait for game state")
+                      else -> AgentDecision(ActionType.WAIT, "Observe before acting")
+                  }
+              }
+          }
+
+          data class ResourcePolicy(
+              val canSpendPrimogems: Boolean = false,
+              val canSpendIntertwinedFates: Boolean = false,
+              val autoWishEnabled: Boolean = false
+          )
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/ScreenAnalyzer.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.graphics.Bitmap
+          import android.graphics.Color
+          import kotlin.math.abs
+
+          data class ScreenObservation(val type: ScreenType, val confidence: Float, val brightness: Float, val bottomDarkness: Float)
+
+          class ScreenAnalyzer {
+              fun analyze(bitmap: Bitmap): ScreenObservation {
+                  if (bitmap.width < 100 || bitmap.height < 100) return ScreenObservation(ScreenType.UNKNOWN, 0.1f, 0f, 0f)
+                  val stepX = (bitmap.width / 20).coerceAtLeast(1)
+                  val stepY = (bitmap.height / 20).coerceAtLeast(1)
+                  var sum = 0.0; var count = 0; var bottomSum = 0.0; var bottomCount = 0
+                  var edgeLike = 0
+                  var last = -1.0
+                  var y = 0
+                  while (y < bitmap.height) {
+                      var x = 0
+                      while (x < bitmap.width) {
+                          val c = bitmap.getPixel(x, y)
+                          val l = (Color.red(c) + Color.green(c) + Color.blue(c)) / 765.0
+                          sum += l; count++
+                          if (y > bitmap.height * 0.70) { bottomSum += l; bottomCount++ }
+                          if (last >= 0 && abs(l - last) > 0.30) edgeLike++
+                          last = l
+                          x += stepX
+                      }
+                      y += stepY
+                  }
+                  val b = (sum / count).toFloat()
+                  val bottom = if (bottomCount > 0) (bottomSum / bottomCount).toFloat() else b
+                  val type = when {
+                      b < 0.08f -> ScreenType.LOADING
+                      bottom < b * 0.55f && b > 0.18f -> ScreenType.DIALOGUE
+                      edgeLike > count * 0.22 -> ScreenType.WORLD
+                      else -> ScreenType.UNKNOWN
+                  }
+                  val conf = when (type) {
+                      ScreenType.LOADING -> 0.90f
+                      ScreenType.DIALOGUE -> 0.72f
+                      ScreenType.WORLD -> 0.66f
+                      else -> 0.40f
+                  }
+                  return ScreenObservation(type, conf, b, bottom)
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AutopilotAccessibilityService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.accessibilityservice.AccessibilityService
+          import android.accessibilityservice.GestureDescription
+          import android.graphics.Path
+          import android.view.accessibility.AccessibilityEvent
+
+          class AutopilotAccessibilityService : AccessibilityService() {
+              companion object { @Volatile var instance: AutopilotAccessibilityService? = null }
+              override fun onServiceConnected() { super.onServiceConnected(); instance = this }
+              override fun onDestroy() { if (instance === this) instance = null; super.onDestroy() }
+              override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+              override fun onInterrupt() = Unit
+
+              fun tap(x: Float, y: Float, duration: Long = 70): Boolean {
+                  val p = Path().apply { moveTo(x, y) }
+                  return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p, 0, duration)).build(), null, null)
+              }
+
+              fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, duration: Long = 350): Boolean {
+                  val p = Path().apply { moveTo(x1, y1); lineTo(x2, y2) }
+                  return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p, 0, duration)).build(), null, null)
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/ActionExecutor.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          class ActionExecutor {
+              fun execute(decision: AgentDecision, width: Int, height: Int, dryRun: Boolean): Boolean {
+                  if (dryRun || decision.action == ActionType.WAIT || decision.action == ActionType.STOP) return true
+                  val svc = AutopilotAccessibilityService.instance ?: return false
+                  return when (decision.action) {
+                      ActionType.DIALOGUE_NEXT, ActionType.INTERACT -> svc.tap(width * 0.87f, height * 0.82f)
+                      ActionType.BASIC_ATTACK -> svc.tap(width * 0.90f, height * 0.67f)
+                      ActionType.DODGE -> svc.tap(width * 0.80f, height * 0.78f)
+                      ActionType.MOVE_FORWARD -> svc.swipe(width * 0.18f, height * 0.78f, width * 0.18f, height * 0.60f, 450)
+                      ActionType.RECOVER -> svc.tap(width * 0.50f, height * 0.80f)
+                      ActionType.OPEN_QUEST -> svc.tap(width * 0.08f, height * 0.15f)
+                      else -> true
+                  }
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/ScreenCaptureService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.app.*
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.PixelFormat
+          import android.hardware.display.DisplayManager
+          import android.media.ImageReader
+          import android.media.projection.MediaProjection
+          import android.media.projection.MediaProjectionManager
+          import android.os.IBinder
+          import android.util.DisplayMetrics
+          import android.view.WindowManager
+
+          class ScreenCaptureService : Service() {
+              companion object { const val EXTRA_CODE = "code"; const val EXTRA_DATA = "data"; @Volatile var lastFrame: Bitmap? = null }
+              private var projection: MediaProjection? = null
+              private var reader: ImageReader? = null
+
+              override fun onCreate() { super.onCreate(); createChannel(); startForeground(50, notification("Screen analysis active")) }
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  val code = intent?.getIntExtra(EXTRA_CODE, Activity.RESULT_CANCELED) ?: return START_NOT_STICKY
+                  val data = intent.getParcelableExtra<Intent>(EXTRA_DATA) ?: return START_NOT_STICKY
+                  val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                  val metrics = DisplayMetrics(); wm.defaultDisplay.getRealMetrics(metrics)
+                  reader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 2)
+                  val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  projection = mgr.getMediaProjection(code, data)
+                  projection?.createVirtualDisplay("AutopilotCapture", metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
+                      DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, null)
+                  reader?.setOnImageAvailableListener({ r ->
+                      val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
+                      try {
+                          val p = image.planes[0]; val rowStride = p.rowStride; val pixelStride = p.pixelStride
+                          val rowPadding = rowStride - pixelStride * metrics.widthPixels
+                          val bmp = Bitmap.createBitmap(metrics.widthPixels + rowPadding / pixelStride, metrics.heightPixels, Bitmap.Config.ARGB_8888)
+                          bmp.copyPixelsFromBuffer(p.buffer)
+                          lastFrame?.recycle(); lastFrame = Bitmap.createBitmap(bmp, 0, 0, metrics.widthPixels, metrics.heightPixels); bmp.recycle()
+                      } finally { image.close() }
+                  }, null)
+                  return START_STICKY
+              }
+
+              override fun onDestroy() { reader?.close(); projection?.stop(); lastFrame?.recycle(); lastFrame = null; super.onDestroy() }
+              private fun createChannel() { val nm = getSystemService(NotificationManager::class.java); nm.createNotificationChannel(NotificationChannel("capture", "Autopilot capture", NotificationManager.IMPORTANCE_LOW)) }
+              private fun notification(text: String) = Notification.Builder(this, "capture").setContentTitle("Genshin Autopilot v0.5").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_view).build()
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/OverlayService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.app.Service
+          import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.PixelFormat
+          import android.os.IBinder
+          import android.view.Gravity
+          import android.view.WindowManager
+          import android.widget.TextView
+
+          class OverlayService : Service() {
+              private var view: TextView? = null
+              override fun onBind(intent: Intent?): IBinder? = null
+              override fun onCreate() {
+                  super.onCreate()
+                  val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                  view = TextView(this).apply { setTextColor(Color.WHITE); setBackgroundColor(0xAA111827.toInt()); textSize = 12f; setPadding(16, 10, 16, 10); text = "AUTOPILOT v0.5\nDRY RUN" }
+                  val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.END; x = 12; y = 80 }
+                  wm.addView(view, lp)
+              }
+              override fun onDestroy() { view?.let { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) }; super.onDestroy() }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AgentController.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.os.Handler
+          import android.os.Looper
+
+          object AgentController {
+              private val handler = Handler(Looper.getMainLooper())
+              private val analyzer = ScreenAnalyzer()
+              private val planner = PlannerEngine()
+              private val executor = ActionExecutor()
+              private var width = 1080; private var height = 2400
+
+              private val loop = object : Runnable {
+                  override fun run() {
+                      if (!AgentState.running) return
+                      val frame = ScreenCaptureService.lastFrame
+                      if (frame != null) {
+                          width = frame.width; height = frame.height
+                          val o = analyzer.analyze(frame)
+                          var s = AgentState.current.copy(screen = o.type, confidence = o.confidence)
+                          val d = planner.decide(s)
+                          val ok = executor.execute(d, width, height, s.dryRun)
+                          s = s.copy(lastAction = d.action, failureCount = if (ok) 0 else s.failureCount + 1)
+                          AgentState.current = s
+                      }
+                      handler.postDelayed(this, 850)
+                  }
+              }
+
+              fun start() { AgentState.running = true; handler.removeCallbacks(loop); handler.post(loop) }
+              fun stop() { AgentState.running = false; handler.removeCallbacks(loop) }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/MainActivity.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.app.Activity
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Color
+          import android.media.projection.MediaProjectionManager
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.view.ViewGroup
+          import android.widget.*
+
+          class MainActivity : Activity() {
+              private lateinit var status: TextView
+              private val captureCode = 321
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(32, 42, 32, 32); setBackgroundColor(Color.rgb(245,247,250)) }
+                  root.addView(TextView(this).apply { text = "GENSHIN AUTOPILOT v0.5"; textSize = 24f; gravity = Gravity.CENTER })
+                  status = TextView(this).apply { textSize = 15f; setPadding(0, 28, 0, 20) }; root.addView(status)
+                  root.addView(btn("1. ENABLE ACCESSIBILITY") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
+                  root.addView(btn("2. ALLOW SCREEN CAPTURE") { val m = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager; startActivityForResult(m.createScreenCaptureIntent(), captureCode) })
+                  root.addView(btn("3. ALLOW OVERLAY") { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) })
+                  root.addView(btn("START DRY RUN") { AgentState.current = AgentState.current.copy(dryRun = true); AgentController.start(); startOverlay(); refresh() })
+                  root.addView(btn("ENABLE AUTOPILOT INPUT") { AgentState.current = AgentState.current.copy(dryRun = false); AgentController.start(); startOverlay(); refresh() })
+                  root.addView(btn("STOP") { AgentController.stop(); AgentState.current = AgentState.current.copy(dryRun = true); stopService(Intent(this, OverlayService::class.java)); refresh() })
+                  root.addView(btn("REFRESH STATUS") { refresh() })
+                  setContentView(root); refresh()
+              }
+
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode == captureCode && resultCode == RESULT_OK && data != null) {
+                      val i = Intent(this, ScreenCaptureService::class.java).putExtra(ScreenCaptureService.EXTRA_CODE, resultCode).putExtra(ScreenCaptureService.EXTRA_DATA, data)
+                      startForegroundService(i); Toast.makeText(this, "Screen capture started", Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              private fun startOverlay() { if (Settings.canDrawOverlays(this)) startService(Intent(this, OverlayService::class.java)) }
+              private fun btn(t: String, f: () -> Unit) = Button(this).apply { text = t; isAllCaps = false; setOnClickListener { f() }; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(0,8,0,8) } }
+              private fun refresh() {
+                  val s = AgentState.current; val stage = MissionPlanner.nextStage(s)
+                  status.text = "Stage: $stage\nScreen: ${s.screen} (${(s.confidence*100).toInt()}%)\nLast action: ${s.lastAction}\nDry run: ${s.dryRun}\nFailures: ${s.failureCount}\n\nTarget: Mondstadt → AR18 → Snezhnaya → Act 1 → Act 2\nPrimogems: LOCKED\nIntertwined Fates: LOCKED\nAuto wish: DISABLED"
+              }
+          }
+          EOT
+
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Run lint
+        run: gradle :app:lintDebug --stacktrace
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK exists
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk GenshinAutopilot-v0.5-debug.apk
+          ls -lh GenshinAutopilot-v0.5-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenshinAutopilot-v0.5-debug-apk
+          path: GenshinAutopilot-v0.5-debug.apk
+          if-no-files-found: error
+          retention-days: 30
