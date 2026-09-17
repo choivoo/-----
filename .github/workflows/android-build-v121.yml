@@ -1,0 +1,1348 @@
+name: Build Genshin Autopilot v1.2.1
+
+on:
+  push:
+    branches: [ v1.2 ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate project and RED tests
+        shell: bash
+        run: |
+          rm -rf app settings.gradle.kts build.gradle.kts gradle.properties
+          mkdir -p app/src/main/java/com/seondwaeji/genshinautopilot
+          mkdir -p app/src/test/java/com/seondwaeji/genshinautopilot
+          mkdir -p app/src/main/res/xml app/src/main/res/values app/src/main/res/drawable-nodpi
+
+          cat > settings.gradle.kts <<'EOT'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "GenshinAutopilot"
+          include(":app")
+          EOT
+
+          cat > build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOT
+
+          cat > gradle.properties <<'EOT'
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOT
+
+          cat > app/build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.seondwaeji.genshinautopilot"
+              compileSdk = 35
+              defaultConfig {
+                  applicationId = "com.seondwaeji.genshinautopilot"
+                  minSdk = 31
+                  targetSdk = 35
+                  versionCode = 14
+                  versionName = "1.2.1"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.activity:activity-ktx:1.10.0")
+              implementation("com.google.mlkit:text-recognition:16.0.1")
+              testImplementation("junit:junit:4.13.2")
+          }
+          EOT
+
+          cat > app/src/main/AndroidManifest.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <queries>
+                  <package android:name="com.miHoYo.GenshinImpact" />
+              </queries>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <application
+                  android:allowBackup="true"
+                  android:label="@string/app_name"
+                  android:icon="@drawable/autopilot_icon"
+                  android:roundIcon="@drawable/autopilot_icon"
+                  android:theme="@style/Theme.GenshinAutopilot">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".AutopilotAccessibilityService"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service_config" />
+                  </service>
+                  <service android:name=".CaptureService" android:foregroundServiceType="mediaProjection" android:exported="false" />
+              </application>
+          </manifest>
+          EOT
+
+          cat > app/src/main/res/values/strings.xml <<'EOT'
+          <resources>
+              <string name="app_name">Genshin AutoPilot v1.2.1</string>
+              <string name="accessibility_description">Executes user-enabled gestures for the selected AutoPilot goal.</string>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/values/themes.xml <<'EOT'
+          <resources>
+              <style name="Theme.GenshinAutopilot" parent="android:style/Theme.Material.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:statusBarColor">#080B16</item>
+                  <item name="android:navigationBarColor">#080B16</item>
+                  <item name="android:colorAccent">#8C8CFF</item>
+                  <item name="android:windowSplashScreenBackground">#080B16</item>
+                  <item name="android:windowSplashScreenAnimatedIcon">@drawable/autopilot_icon</item>
+              </style>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:description="@string/accessibility_description"
+              android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:notificationTimeout="100"
+              android:canPerformGestures="true"
+              android:canRetrieveWindowContent="true" />
+          EOT
+
+          base64 -d .github/assets/autopilot_icon.b64 > app/src/main/res/drawable-nodpi/autopilot_icon.jpg
+
+          cat > app/src/test/java/com/seondwaeji/genshinautopilot/V11LogicTest.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import org.junit.Assert.*
+          import org.junit.Test
+
+          class V11LogicTest {
+              @Test fun emptyGoalFallsBackToAuto() {
+                  val g = GoalIntelligence.parse("   ")
+                  assertTrue(g.autoPriority)
+                  assertTrue(g.lockPrimogems)
+                  assertTrue(g.lockWishes)
+              }
+
+              @Test fun koreanNaturalGoalIsParsed() {
+                  val g = GoalIntelligence.parse("AR18까지 올리고 프롤로그 3막을 깨. 스네즈나야 7장 2막까지 진행하고 원석은 쓰지 마. 치치를 40레벨 우선 육성하고 완료하면 멈춰.")
+                  assertEquals(18, g.targetAr)
+                  assertEquals(3, g.targetPrologueAct)
+                  assertEquals(2, g.targetChapter7Act)
+                  assertEquals("치치", g.priorityCharacter)
+                  assertEquals(40, g.priorityCharacterLevel)
+                  assertTrue(g.stopWhenComplete)
+                  assertTrue(g.lockPrimogems)
+              }
+
+              @Test fun customGoalCanRequestStoryWithoutAr() {
+                  val g = GoalIntelligence.parse("스네즈나야 미리보기까지만 진행하고 멈춰")
+                  assertTrue(g.targetSnezhnayaPreview)
+                  assertTrue(g.stopWhenComplete)
+              }
+
+              @Test fun customGoalStillNeverAutoWishesByDefault() {
+                  assertTrue(GoalIntelligence.parse("캐릭터를 키워줘").lockWishes)
+              }
+
+              @Test fun plannerUsesCustomArGoal() {
+                  val goal = ParsedGoal(targetAr=20, autoPriority=false)
+                  val d = GoalPlanner.next(AccountState(ar=12), goal)
+                  assertEquals(SubGoal.REACH_TARGET_AR, d.subGoal)
+              }
+
+              @Test fun autoPlannerUsesDefaultStoryRoute() {
+                  val d = GoalPlanner.next(AccountState(ar=18, prologueAct=3, snezhnayaPreviewEntered=true, act1Complete=true, act2Complete=false), ParsedGoal(autoPriority=true))
+                  assertEquals(SubGoal.COMPLETE_ACT_2, d.subGoal)
+              }
+
+              @Test fun growthPlannerPrioritizesNamedCharacter() {
+                  val goal = ParsedGoal(priorityCharacter="치치", priorityCharacterLevel=40, autoPriority=false)
+                  val s = AccountState(ar=18, characterLevels=mapOf("치치" to 20))
+                  assertEquals(SubGoal.GROW_PRIORITY_CHARACTER, GoalPlanner.next(s, goal).subGoal)
+              }
+
+              @Test fun partyAdvisorUsesPriorityAndHighestLevels() {
+                  val s = AccountState(characterLevels=mapOf("리사" to 20, "케이아" to 30, "치치" to 40, "여행자" to 35, "엠버" to 10))
+                  val p = PartyAdvisor.recommend(s, "치치")
+                  assertEquals("치치", p.first())
+                  assertEquals(4, p.size)
+              }
+
+              @Test fun lowConfidenceBlocksClicks() {
+                  assertFalse(ActionGate.canAct(AccountState(confidence=.59f), dryRun=false))
+              }
+
+              @Test fun wishScreenBlocksClicks() {
+                  assertFalse(ActionGate.canAct(AccountState(confidence=.95f, screen=ScreenType.WISH), dryRun=false))
+              }
+
+              @Test fun recoveryEscalates() {
+                  assertEquals(RecoveryStep.RETRACK_QUEST, RecoveryManager.step(3))
+                  assertEquals(RecoveryStep.SAFE_TELEPORT, RecoveryManager.step(7))
+              }
+
+              @Test fun combatPolicyDodgesAtLowHp() {
+                  assertEquals(CombatAction.DODGE, CombatPolicy.choose(hpPercent=20, burstReady=true, skillReady=true))
+                  assertEquals(CombatAction.BURST, CombatPolicy.choose(hpPercent=90, burstReady=true, skillReady=true))
+              }
+
+              @Test fun runPolicyRequiresCaptureAndNotPaused() {
+                  assertFalse(AgentRunPolicy.shouldRun(false,false,AgentMode.AUTOPLAY))
+                  assertFalse(AgentRunPolicy.shouldRun(true,true,AgentMode.AUTOPLAY))
+                  assertFalse(AgentRunPolicy.shouldRun(true,false,AgentMode.PAUSED))
+                  assertTrue(AgentRunPolicy.shouldRun(true,false,AgentMode.AUTOPLAY))
+              }
+
+              @Test fun stableDirectionRequiresTemporalAgreement() {
+                  val d=DirectionStabilizer(6)
+                  var r:StableDirection?=null
+                  listOf(11f,9f,12f,10f,8f).forEach { r=d.offer(MarkerObservation(it,.9f)) }
+                  assertNotNull(r)
+                  assertTrue(r!!.stable)
+                  assertFalse(r!!.oscillating)
+                  assertTrue(kotlin.math.abs(r!!.angle-10f)<8f)
+              }
+
+              @Test fun oscillatingDirectionsDoNotAuthorizeMovement() {
+                  val d=DirectionStabilizer(6)
+                  var r:StableDirection?=null
+                  listOf(0f,120f,-120f,90f,-90f,170f).forEach { r=d.offer(MarkerObservation(it,.9f)) }
+                  assertNotNull(r)
+                  assertFalse(r!!.stable)
+                  assertTrue(r!!.oscillating)
+              }
+
+              @Test fun actionArbiterPrefersInteractionOverNavigation() {
+                  val s=AccountState(
+                      screen=ScreenType.WORLD, confidence=.95f,
+                      interactionConfidence=.91f, interactionX=.70f, interactionY=.52f,
+                      miniMapDirection=20f, markerConfidence=.9f, markerStable=true
+                  )
+                  val a=ActionArbiter.choose(s,Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"test"))
+                  assertEquals(AgentActionType.INTERACT,a.type)
+              }
+
+              @Test fun actionArbiterWaitsForUnstableMarker() {
+                  val s=AccountState(screen=ScreenType.WORLD,confidence=.95f,miniMapDirection=80f,markerConfidence=.9f,markerStable=false)
+                  val a=ActionArbiter.choose(s,Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"test"))
+                  assertNotEquals(AgentActionType.NAVIGATE,a.type)
+              }
+
+              @Test fun semanticDetectorFindsRightSideInteractionPrompt() {
+                  val t=SemanticUiDetector.detect(listOf(
+                      OcrElement("몬드성 주민",.69f,.51f,.16f,.05f),
+                      OcrElement("임무 목표",.20f,.24f,.22f,.05f)
+                  ))
+                  assertTrue(t.interactionConfidence>.7f)
+                  assertTrue(t.questTextConfidence>.6f)
+              }
+
+              @Test fun wishScreenAlwaysWinsAsWait() {
+                  val s=AccountState(screen=ScreenType.WISH,confidence=.99f,interactionConfidence=.99f,markerStable=true,markerConfidence=.99f,miniMapDirection=0f)
+                  assertEquals(AgentActionType.WAIT,ActionArbiter.choose(s,Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"test")).type)
+              }
+
+              @Test fun steeringTurnsCameraBeforeMoving() {
+                  val left=SteeringController.decide(markerAngle=-150f,confidence=.9f,stable=true,oscillating=false)
+                  val right=SteeringController.decide(markerAngle=-30f,confidence=.9f,stable=true,oscillating=false)
+                  assertTrue(left.mode==SteeringMode.TURN_LEFT || left.mode==SteeringMode.TURN_RIGHT)
+                  assertTrue(right.mode==SteeringMode.TURN_LEFT || right.mode==SteeringMode.TURN_RIGHT)
+              }
+
+              @Test fun steeringMovesForwardOnlyWhenMarkerNearTop() {
+                  val s=SteeringController.decide(markerAngle=-92f,confidence=.9f,stable=true,oscillating=false)
+                  assertEquals(SteeringMode.FORWARD,s.mode)
+                  assertTrue(kotlin.math.abs(s.error)<18f)
+              }
+
+              @Test fun steeringHoldsWhenOscillating() {
+                  val s=SteeringController.decide(markerAngle=20f,confidence=.9f,stable=true,oscillating=true)
+                  assertEquals(SteeringMode.HOLD,s.mode)
+              }
+
+              @Test fun arbiterMapsSteeringToCameraOrForward() {
+                  val base=Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"test")
+                  val left=AccountState(screen=ScreenType.WORLD,confidence=.95f,markerStable=true,markerConfidence=.9f,miniMapDirection=-150f)
+                  val forward=AccountState(screen=ScreenType.WORLD,confidence=.95f,markerStable=true,markerConfidence=.9f,miniMapDirection=-90f)
+                  assertNotEquals(AgentActionType.MOVE_FORWARD,ActionArbiter.choose(left,base).type)
+                  assertEquals(AgentActionType.MOVE_FORWARD,ActionArbiter.choose(forward,base).type)
+              }
+          }
+          EOT
+
+      - name: Confirm RED phase
+        shell: bash
+        run: |
+          set +e
+          gradle :app:testDebugUnitTest > red.log 2>&1
+          code=$?
+          tail -100 red.log
+          if [ "$code" -eq 0 ]; then
+            echo "RED phase unexpectedly passed"
+            exit 1
+          fi
+          echo "RED confirmed"
+
+      - name: Generate v1.2 implementation
+        shell: bash
+        run: |
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/Model.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          enum class AgentMode { SCAN, AUTOPLAY, PAUSED, COMPLETE, RECOVERY }
+          enum class ScreenType { WORLD, DIALOGUE, QUEST, MAP, PARTY, CHARACTER, BATTLE, LOADING, REWARD, WISH, DEATH, UNKNOWN }
+          enum class SubGoal {
+              SCAN_ACCOUNT, REACH_TARGET_AR, COMPLETE_PROLOGUE_3, ENTER_SNEZHNAYA_PREVIEW,
+              COMPLETE_ACT_1, COMPLETE_ACT_2, GROW_PRIORITY_CHARACTER, OPTIMIZE_PARTY, RECOVER, DONE
+          }
+          enum class RecoveryStep { RESCAN, BACK, RETRACK_QUEST, OPEN_MAP, SAFE_TELEPORT, PAUSE }
+          enum class CombatAction { ATTACK, SKILL, BURST, DODGE, RECOVER, NONE }
+          enum class AgentActionType { WAIT, DIALOGUE, DIALOGUE_CHOICE, REWARD, REVIVE, COMBAT, INTERACT, CAMERA_LEFT, CAMERA_RIGHT, MOVE_FORWARD, RETRACK_QUEST, RECOVER }
+          enum class SteeringMode { SEARCH, TURN_LEFT, TURN_RIGHT, FORWARD, HOLD }
+
+          data class ParsedGoal(
+              val originalText:String="",
+              val autoPriority:Boolean=false,
+              val targetAr:Int?=null,
+              val targetPrologueAct:Int?=null,
+              val targetSnezhnayaPreview:Boolean=false,
+              val targetChapter7Act:Int?=null,
+              val priorityCharacter:String?=null,
+              val priorityCharacterLevel:Int?=null,
+              val preferStory:Boolean=true,
+              val lockPrimogems:Boolean=true,
+              val lockIntertwinedFates:Boolean=true,
+              val lockWishes:Boolean=true,
+              val stopWhenComplete:Boolean=true
+          )
+
+          data class AccountState(
+              val ar:Int?=null,
+              val prologueAct:Int=0,
+              val snezhnayaPreviewEntered:Boolean=false,
+              val act1Complete:Boolean=false,
+              val act2Complete:Boolean=false,
+              val screen:ScreenType=ScreenType.UNKNOWN,
+              val primogems:Int?=null,
+              val intertwinedFates:Int?=null,
+              val acquaintFates:Int?=null,
+              val mora:Int?=null,
+              val resin:Int?=null,
+              val characterLevels:Map<String,Int> = emptyMap(),
+              val partyNames:List<String> = emptyList(),
+              val miniMapDirection:Float?=null,
+              val confidence:Float=0f,
+              val hpPercent:Int=100,
+              val skillReady:Boolean=false,
+              val burstReady:Boolean=false,
+              val interactionConfidence:Float=0f,
+              val interactionX:Float?=null,
+              val interactionY:Float?=null,
+              val dialogueChoiceConfidence:Float=0f,
+              val dialogueChoiceX:Float?=null,
+              val dialogueChoiceY:Float?=null,
+              val questTextConfidence:Float=0f,
+              val questTextX:Float?=null,
+              val questTextY:Float?=null,
+              val markerConfidence:Float=0f,
+              val markerStable:Boolean=false,
+              val oscillating:Boolean=false,
+              val enemyConfidence:Float=0f,
+              val motionScore:Float=1f,
+              val stuckFrames:Int=0,
+              val steeringMode:SteeringMode=SteeringMode.SEARCH,
+              val headingError:Float?=null,
+              val headingLocked:Boolean=false,
+              val failures:Int=0,
+              val lastOcrText:String=""
+          )
+
+          data class Decision(val mode:AgentMode,val subGoal:SubGoal,val reason:String)
+
+          object RuntimeState {
+              @Volatile var account=AccountState()
+              @Volatile var parsedGoal=ParsedGoal(autoPriority=true)
+              @Volatile var mode=AgentMode.SCAN
+              @Volatile var dryRun=true
+              @Volatile var lastAction="Idle"
+              @Volatile var sessionStarted=0L
+              @Volatile var currentGoalText=""
+              @Volatile var captureActive=false
+              @Volatile var userPaused=false
+              @Volatile var pendingAutostart=false
+              @Volatile var lastActionType=AgentActionType.WAIT
+              @Volatile var lastActionAt=0L
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/GoalIntelligence.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          object GoalIntelligence {
+              private val knownCharacters=listOf("치치","미즈키","베스나","보다니챠","여행자","케이아","리사","엠버","바레사","모나")
+              fun parse(raw:String):ParsedGoal {
+                  val text=raw.trim()
+                  if(text.isBlank()) return ParsedGoal(originalText="",autoPriority=true)
+                  val ar=Regex("(?:AR|모험 ?등급)\\s*(\\d{1,2})",RegexOption.IGNORE_CASE).find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                  val prologue=when {
+                      Regex("프롤로그\\s*3막|프롤로그\\s*제?3막",RegexOption.IGNORE_CASE).containsMatchIn(text) -> 3
+                      Regex("프롤로그\\s*2막|프롤로그\\s*제?2막",RegexOption.IGNORE_CASE).containsMatchIn(text) -> 2
+                      else -> null
+                  }
+                  val act=Regex("7장\\s*(\\d)막").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                  val preview=text.contains("스네즈나야 미리보기") || text.contains("스네즈나야로 가")
+                  val character=knownCharacters.firstOrNull{text.contains(it)}
+                  val level=character?.let {
+                      Regex(Regex.escape(it)+".{0,12}?(\\d{1,3})\\s*레벨").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                          ?: Regex(Regex.escape(it)+".{0,12}?Lv\\.?\\s*(\\d{1,3})",RegexOption.IGNORE_CASE).find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                  }
+                  val storyFirst = !(text.contains("육성 우선") || text.contains("캐릭터 우선"))
+                  return ParsedGoal(
+                      originalText=text,
+                      autoPriority=false,
+                      targetAr=ar,
+                      targetPrologueAct=prologue,
+                      targetSnezhnayaPreview=preview || (act!=null),
+                      targetChapter7Act=act,
+                      priorityCharacter=character,
+                      priorityCharacterLevel=level,
+                      preferStory=storyFirst,
+                      lockPrimogems=!text.contains("원석 사용 허용"),
+                      lockIntertwinedFates=!text.contains("뒤얽힌 인연 사용 허용"),
+                      lockWishes=!text.contains("자동 가챠 허용"),
+                      stopWhenComplete=!text.contains("완료 후 계속")
+                  )
+              }
+
+              fun summarize(g:ParsedGoal):String {
+                  if(g.autoPriority) return "AUTO: 계정 상태를 분석해 스토리/AR/육성 우선순위를 자동 결정"
+                  val parts=mutableListOf<String>()
+                  g.targetAr?.let{parts+="AR "+it}
+                  g.targetPrologueAct?.let{parts+="프롤로그 "+it+"막"}
+                  if(g.targetSnezhnayaPreview) parts+="스네즈나야 미리보기"
+                  g.targetChapter7Act?.let{parts+="7장 "+it+"막"}
+                  g.priorityCharacter?.let{parts+="우선 육성 "+it+(g.priorityCharacterLevel?.let{lv->" Lv."+lv} ?: "")}
+                  if(g.lockWishes) parts+="자동 가챠 잠금"
+                  return parts.joinToString(" → ").ifBlank{"사용자 목표 분석 완료"}
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/Planner.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          object GoalPlanner {
+              fun next(s:AccountState,g:ParsedGoal):Decision {
+                  val ar=s.ar ?: return Decision(AgentMode.SCAN,SubGoal.SCAN_ACCOUNT,"AR/계정 상태 확인 필요")
+                  if(g.autoPriority) {
+                      if(ar<18) return Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"AUTO: AR18 우선")
+                      if(s.prologueAct<3) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_PROLOGUE_3,"AUTO: 프롤로그 3막")
+                      if(!s.snezhnayaPreviewEntered) return Decision(AgentMode.AUTOPLAY,SubGoal.ENTER_SNEZHNAYA_PREVIEW,"AUTO: 스네즈나야 미리보기")
+                      if(!s.act1Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_1,"AUTO: 7장 1막")
+                      if(!s.act2Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_2,"AUTO: 7장 2막")
+                      return Decision(AgentMode.COMPLETE,SubGoal.DONE,"AUTO 우선 루트 완료")
+                  }
+
+                  if(g.priorityCharacter!=null && g.priorityCharacterLevel!=null && !g.preferStory) {
+                      val lv=s.characterLevels[g.priorityCharacter] ?: 0
+                      if(lv<g.priorityCharacterLevel) return Decision(AgentMode.AUTOPLAY,SubGoal.GROW_PRIORITY_CHARACTER,"우선 육성 목표")
+                  }
+                  g.targetAr?.let{if(ar<it)return Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"목표 AR "+it)}
+                  g.targetPrologueAct?.let{if(s.prologueAct<it)return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_PROLOGUE_3,"프롤로그 목표")}
+                  if(g.targetSnezhnayaPreview && !s.snezhnayaPreviewEntered) return Decision(AgentMode.AUTOPLAY,SubGoal.ENTER_SNEZHNAYA_PREVIEW,"스네즈나야 진입 목표")
+                  if((g.targetChapter7Act?:0)>=1 && !s.act1Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_1,"7장 1막 목표")
+                  if((g.targetChapter7Act?:0)>=2 && !s.act2Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_2,"7장 2막 목표")
+                  if(g.priorityCharacter!=null && g.priorityCharacterLevel!=null) {
+                      val lv=s.characterLevels[g.priorityCharacter] ?: 0
+                      if(lv<g.priorityCharacterLevel) return Decision(AgentMode.AUTOPLAY,SubGoal.GROW_PRIORITY_CHARACTER,"육성 목표")
+                  }
+                  return Decision(AgentMode.COMPLETE,SubGoal.DONE,"사용자 목표 완료")
+              }
+          }
+
+          object PartyAdvisor {
+              fun recommend(s:AccountState,priority:String?):List<String> {
+                  val sorted=s.characterLevels.entries.sortedByDescending{it.value}.map{it.key}.toMutableList()
+                  if(priority!=null && sorted.remove(priority)) sorted.add(0,priority)
+                  val defaults=listOf("치치","여행자","케이아","리사","엠버")
+                  defaults.forEach{if(it !in sorted && s.characterLevels.containsKey(it))sorted.add(it)}
+                  return sorted.distinct().take(4)
+              }
+          }
+
+          object ActionGate {
+              fun canAct(state:AccountState,dryRun:Boolean):Boolean =
+                  !dryRun && state.confidence>=.70f && state.screen!=ScreenType.WISH && state.screen!=ScreenType.LOADING
+          }
+
+          object RecoveryManager {
+              fun step(f:Int)=when {
+                  f<=1 -> RecoveryStep.RESCAN
+                  f<=2 -> RecoveryStep.BACK
+                  f<=4 -> RecoveryStep.RETRACK_QUEST
+                  f<=6 -> RecoveryStep.OPEN_MAP
+                  f<=8 -> RecoveryStep.SAFE_TELEPORT
+                  else -> RecoveryStep.PAUSE
+              }
+          }
+
+          object CombatPolicy {
+              fun choose(hpPercent:Int,burstReady:Boolean,skillReady:Boolean):CombatAction = when {
+                  hpPercent<=25 -> CombatAction.DODGE
+                  burstReady -> CombatAction.BURST
+                  skillReady -> CombatAction.SKILL
+                  else -> CombatAction.ATTACK
+              }
+          }
+
+          object LongRunGuard {
+              fun canContinue(batteryPercent:Int,thermalSevere:Boolean):Boolean = batteryPercent>=20 && !thermalSevere
+          }
+
+          object AgentRunPolicy {
+              fun shouldRun(captureActive:Boolean,userPaused:Boolean,mode:AgentMode):Boolean =
+                  captureActive && !userPaused && mode!=AgentMode.PAUSED && mode!=AgentMode.COMPLETE
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/ScreenInterpreter.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          object ScreenInterpreter {
+              private fun intValue(t:String,vararg keys:String):Int? {
+                  for(k in keys) {
+                      val m=Regex("(?:$k)\\s*[:：]?\\s*([0-9,]{1,9})",RegexOption.IGNORE_CASE).find(t)
+                      val v=m?.groupValues?.getOrNull(1)?.replace(",","")?.toIntOrNull()
+                      if(v!=null)return v
+                  }
+                  return null
+              }
+
+              fun fromText(raw:String):AccountState {
+                  val t=raw.replace("\n"," ")
+                  val old=RuntimeState.account
+                  val levels=old.characterLevels.toMutableMap()
+                  Regex("([가-힣A-Za-z][가-힣A-Za-z ]{0,15})\\s*(?:Lv\\.?|레벨)\\s*(\\d{1,3})",RegexOption.IGNORE_CASE)
+                      .findAll(t).forEach{levels[it.groupValues[1].trim()]=it.groupValues[2].toInt()}
+                  val screen=when {
+                      t.contains("기원",true)||t.contains("Wish",true)->ScreenType.WISH
+                      t.contains("대화",true)||t.contains("Dialogue",true)->ScreenType.DIALOGUE
+                      t.contains("임무",true)||t.contains("Quest",true)->ScreenType.QUEST
+                      t.contains("파티",true)||t.contains("Party",true)->ScreenType.PARTY
+                      t.contains("캐릭터",true)||t.contains("Character",true)->ScreenType.CHARACTER
+                      t.contains("지도",true)||t.contains("Map",true)->ScreenType.MAP
+                      t.contains("보상",true)||t.contains("Reward",true)->ScreenType.REWARD
+                      t.contains("사망",true)||t.contains("Revive",true)->ScreenType.DEATH
+                      else->ScreenType.WORLD
+                  }
+                  val p=when {
+                      t.contains("드래곤과 자유의 노래",true)||t.contains("Song of the Dragon",true)->3
+                      t.contains("프롤로그 제2막",true)||t.contains("Prologue Act II",true)->2
+                      t.contains("프롤로그 제1막",true)||t.contains("Prologue Act I",true)->1
+                      else->old.prologueAct
+                  }
+                  val preview=old.snezhnayaPreviewEntered||t.contains("스네즈나야",true)||t.contains("Snezhnaya",true)
+                  val a1=old.act1Complete||t.contains("7장 2막",true)||t.contains("Chapter VII Act II",true)
+                  val a2=old.act2Complete||t.contains("7장 2막 완료",true)||t.contains("Act II Complete",true)
+                  val hp=Regex("(\\d{1,3})\\s*%").find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(0,100) ?: old.hpPercent
+                  return old.copy(
+                      ar=intValue(t,"AR","모험 등급","Adventure Rank")?:old.ar,
+                      primogems=intValue(t,"원석","Primogems")?:old.primogems,
+                      mora=intValue(t,"모라","Mora")?:old.mora,
+                      resin=Regex("(?:레진|Resin)\\s*[:：]?\\s*(\\d{1,3})\\s*/",RegexOption.IGNORE_CASE).find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()?:old.resin,
+                      intertwinedFates=intValue(t,"뒤얽힌 인연","Intertwined Fate")?:old.intertwinedFates,
+                      acquaintFates=intValue(t,"만남의 인연","Acquaint Fate")?:old.acquaintFates,
+                      characterLevels=levels,screen=screen,prologueAct=p,snezhnayaPreviewEntered=preview,act1Complete=a1,act2Complete=a2,
+                      confidence=if(t.length>25).88f else if(t.isNotBlank()).74f else .2f,hpPercent=hp,lastOcrText=t.take(3000)
+                  )
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/PerceptionBrain.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.graphics.Bitmap
+          import kotlin.math.*
+
+          data class OcrElement(val text:String,val cx:Float,val cy:Float,val w:Float,val h:Float)
+          data class SemanticTargets(
+              val interactionConfidence:Float=0f,val interactionX:Float?=null,val interactionY:Float?=null,
+              val dialogueChoiceConfidence:Float=0f,val dialogueChoiceX:Float?=null,val dialogueChoiceY:Float?=null,
+              val questTextConfidence:Float=0f,val questTextX:Float?=null,val questTextY:Float?=null
+          )
+
+          object SemanticUiDetector {
+              fun detect(elements:List<OcrElement>):SemanticTargets {
+                  val usable=elements.filter{it.text.trim().isNotEmpty() && it.text.length<=48}
+                  val interaction=usable
+                      .filter{it.cx in .53f..84f/100f && it.cy in .27f..78f && it.w<.34f}
+                      .maxByOrNull { interactionScore(it) }
+                  val rightChoices=usable.filter{it.cx>.56f && it.cy>.36f && it.cy<.84f && it.w<.42f}
+                  val choice=if(rightChoices.size>=2) rightChoices.maxByOrNull{it.w} else null
+                  val quest=usable
+                      .filter{it.cx<.44f && it.cy in .10f..62f && it.w>.06f}
+                      .maxByOrNull { questScore(it) }
+                  return SemanticTargets(
+                      interactionConfidence=interaction?.let{interactionScore(it)}?:0f,
+                      interactionX=interaction?.cx,interactionY=interaction?.cy,
+                      dialogueChoiceConfidence=choice?.let{(.68f + min(.25f,it.w)).coerceAtMost(.93f)}?:0f,
+                      dialogueChoiceX=choice?.cx,dialogueChoiceY=choice?.cy,
+                      questTextConfidence=quest?.let{questScore(it)}?:0f,
+                      questTextX=quest?.cx,questTextY=quest?.cy
+                  )
+              }
+              private fun interactionScore(e:OcrElement):Float {
+                  val center=1f-(abs(e.cy-.52f)/.30f).coerceIn(0f,1f)
+                  val xScore=1f-(abs(e.cx-.68f)/.20f).coerceIn(0f,1f)
+                  return (.58f+.22f*center+.18f*xScore).coerceIn(0f,.96f)
+              }
+              private fun questScore(e:OcrElement):Float {
+                  val x=1f-(e.cx/.45f).coerceIn(0f,1f)
+                  return (.62f+.18f*x+min(.14f,e.w)).coerceIn(0f,.94f)
+              }
+          }
+
+          data class MarkerObservation(val angle:Float,val confidence:Float)
+          data class StableDirection(val angle:Float,val confidence:Float,val stable:Boolean,val oscillating:Boolean)
+
+          class DirectionStabilizer(private val capacity:Int=6) {
+              private val q=ArrayDeque<MarkerObservation>()
+              private var lastStable:Float?=null
+              @Synchronized fun reset(){q.clear();lastStable=null}
+              @Synchronized fun offer(obs:MarkerObservation?):StableDirection? {
+                  if(obs==null || obs.confidence<.35f) {
+                      if(q.isNotEmpty()) q.removeFirst()
+                      return summarize()
+                  }
+                  q.addLast(obs)
+                  while(q.size>capacity)q.removeFirst()
+                  return summarize()
+              }
+              private fun summarize():StableDirection? {
+                  if(q.isEmpty())return null
+                  var sx=0.0;var sy=0.0;var sw=0.0
+                  q.forEach{
+                      val r=Math.toRadians(it.angle.toDouble())
+                      val w=it.confidence.toDouble()
+                      sx+=cos(r)*w;sy+=sin(r)*w;sw+=w
+                  }
+                  if(sw<=0.0)return null
+                  val resultant=sqrt(sx*sx+sy*sy)/sw
+                  var angle=Math.toDegrees(atan2(sy,sx)).toFloat()
+                  val avg=(q.sumOf{it.confidence.toDouble()}/q.size).toFloat()
+                  val oscillating=q.size>=4 && resultant<.58
+                  var stable=q.size>=3 && resultant>.78 && avg>.58f
+                  val prior=lastStable
+                  if(stable && prior!=null && angularDistance(prior,angle)>58f && q.size<5) stable=false
+                  if(stable){lastStable=angle}
+                  else if(prior!=null && !oscillating && resultant>.65) angle=prior
+                  return StableDirection(angle,(resultant.toFloat()*avg).coerceIn(0f,1f),stable,oscillating)
+              }
+              private fun angularDistance(a:Float,b:Float):Float {
+                  var d=abs(a-b)%360f
+                  if(d>180f)d=360f-d
+                  return d
+              }
+          }
+
+          object NavigationMemory {
+              private val stabilizer=DirectionStabilizer(7)
+              fun update(obs:MarkerObservation?):StableDirection? = stabilizer.offer(obs)
+              fun reset()=stabilizer.reset()
+          }
+
+          data class AgentAction(
+              val type:AgentActionType,
+              val x:Float?=null,val y:Float?=null,
+              val confidence:Float=0f,
+              val reason:String=""
+          )
+
+          data class SteeringDecision(val mode:SteeringMode,val error:Float,val confidence:Float)
+
+          object SteeringController {
+              // Minimap top is -90 degrees in screen coordinates.
+              private var lastTurn:SteeringMode=SteeringMode.SEARCH
+              private var turnSince=0L
+              private fun wrap(v:Float):Float {
+                  var x=v
+                  while(x>180f)x-=360f
+                  while(x<-180f)x+=360f
+                  return x
+              }
+              @Synchronized fun decide(markerAngle:Float?,confidence:Float,stable:Boolean,oscillating:Boolean,now:Long=System.currentTimeMillis()):SteeringDecision {
+                  if(markerAngle==null || confidence<.60f || !stable) return SteeringDecision(SteeringMode.SEARCH,0f,confidence)
+                  if(oscillating) return SteeringDecision(SteeringMode.HOLD,0f,confidence)
+                  val error=wrap(markerAngle-(-90f))
+                  if(kotlin.math.abs(error)<=16f) {
+                      lastTurn=SteeringMode.FORWARD
+                      turnSince=now
+                      return SteeringDecision(SteeringMode.FORWARD,error,confidence)
+                  }
+                  val desired=if(error<0f)SteeringMode.TURN_LEFT else SteeringMode.TURN_RIGHT
+                  if(lastTurn!=desired) {
+                      // hysteresis: don't instantly reverse camera steering.
+                      if(now-turnSince<1200L && (lastTurn==SteeringMode.TURN_LEFT || lastTurn==SteeringMode.TURN_RIGHT))
+                          return SteeringDecision(SteeringMode.HOLD,error,confidence)
+                      lastTurn=desired
+                      turnSince=now
+                  }
+                  return SteeringDecision(desired,error,confidence)
+              }
+          }
+
+          object ActionArbiter {
+              fun choose(s:AccountState,d:Decision):AgentAction {
+                  if(s.screen==ScreenType.WISH) return AgentAction(AgentActionType.WAIT,reason="기원 화면 차단")
+                  if(s.dialogueChoiceConfidence>.76f && s.dialogueChoiceX!=null && s.dialogueChoiceY!=null)
+                      return AgentAction(AgentActionType.DIALOGUE_CHOICE,s.dialogueChoiceX,s.dialogueChoiceY,s.dialogueChoiceConfidence,"대화 선택지")
+                  if(s.screen==ScreenType.DIALOGUE) return AgentAction(AgentActionType.DIALOGUE,confidence=.86f,reason="대화 진행")
+                  if(s.screen==ScreenType.REWARD) return AgentAction(AgentActionType.REWARD,confidence=.9f,reason="보상 화면")
+                  if(s.screen==ScreenType.DEATH) return AgentAction(AgentActionType.REVIVE,confidence=.92f,reason="사망 복구")
+                  if(s.screen==ScreenType.BATTLE || s.enemyConfidence>.74f) return AgentAction(AgentActionType.COMBAT,confidence=max(.76f,s.enemyConfidence),reason="전투 감지")
+                  if(s.interactionConfidence>.78f && s.interactionX!=null && s.interactionY!=null)
+                      return AgentAction(AgentActionType.INTERACT,s.interactionX,s.interactionY,s.interactionConfidence,"상호작용 UI")
+                  if(s.stuckFrames>=4) return AgentAction(AgentActionType.RECOVER,confidence=.88f,reason="막힘 감지")
+                  val steer=SteeringController.decide(s.miniMapDirection,s.markerConfidence,s.markerStable,s.oscillating)
+                  when(steer.mode) {
+                      SteeringMode.TURN_LEFT -> return AgentAction(AgentActionType.CAMERA_LEFT,confidence=steer.confidence,reason="카메라 왼쪽 정렬")
+                      SteeringMode.TURN_RIGHT -> return AgentAction(AgentActionType.CAMERA_RIGHT,confidence=steer.confidence,reason="카메라 오른쪽 정렬")
+                      SteeringMode.FORWARD -> return AgentAction(AgentActionType.MOVE_FORWARD,confidence=steer.confidence,reason="정면 정렬 완료 — 전진")
+                      SteeringMode.HOLD -> return AgentAction(AgentActionType.WAIT,reason="방향 진동 감지 — 잠시 유지")
+                      SteeringMode.SEARCH -> Unit
+                  }
+                  if(s.screen==ScreenType.WORLD && s.questTextConfidence>.76f && s.questTextX!=null && s.questTextY!=null)
+                      return AgentAction(AgentActionType.RETRACK_QUEST,s.questTextX,s.questTextY,s.questTextConfidence,"퀘스트 텍스트 재추적")
+                  return AgentAction(AgentActionType.WAIT,reason=d.reason+" — 확실한 행동 대상 없음")
+              }
+          }
+
+          object ActionScheduler {
+              private val last=mutableMapOf<AgentActionType,Long>()
+              private fun cooldown(t:AgentActionType)=when(t){
+                  AgentActionType.MOVE_FORWARD->900L
+                  AgentActionType.CAMERA_LEFT,AgentActionType.CAMERA_RIGHT->650L
+                  AgentActionType.INTERACT->850L
+                  AgentActionType.DIALOGUE,AgentActionType.DIALOGUE_CHOICE->520L
+                  AgentActionType.RETRACK_QUEST->3500L
+                  AgentActionType.RECOVER->2400L
+                  AgentActionType.COMBAT->420L
+                  else->700L
+              }
+              @Synchronized fun allow(t:AgentActionType,now:Long):Boolean {
+                  val p=last[t]?:0L
+                  if(now-p<cooldown(t))return false
+                  last[t]=now
+                  return true
+              }
+          }
+
+          object CombatVisualAnalyzer {
+              fun enemyConfidence(bitmap:Bitmap):Float {
+                  val w=bitmap.width;val h=bitmap.height
+                  var best=0
+                  for(y in (h*.08).toInt() until (h*.58).toInt() step 4) {
+                      var run=0
+                      for(x in (w*.18).toInt() until (w*.82).toInt() step 3) {
+                          val c=bitmap.getPixel(x,y);val r=(c shr 16)and 255;val g=(c shr 8)and 255;val b=c and 255
+                          if(r>155 && r>g*1.55 && r>b*1.45 && g<125){run++;if(run>best)best=run}else run=0
+                      }
+                  }
+                  val normalized=best.toFloat()/max(1,(w*.64/3).toInt())
+                  return (normalized*3.8f).coerceIn(0f,.96f)
+              }
+          }
+
+          object FrameMotionAnalyzer {
+              fun sample(bitmap:Bitmap):IntArray {
+                  val cols=16;val rows=10;val out=IntArray(cols*rows);var i=0
+                  for(ry in 0 until rows)for(rx in 0 until cols){
+                      val x=((rx+.5f)/cols*bitmap.width).toInt().coerceIn(0,bitmap.width-1)
+                      val y=((ry+.5f)/rows*bitmap.height).toInt().coerceIn(0,bitmap.height-1)
+                      val c=bitmap.getPixel(x,y);val r=(c shr 16)and 255;val g=(c shr 8)and 255;val b=c and 255
+                      out[i++]=(r*3+g*6+b)/10
+                  }
+                  return out
+              }
+              fun difference(a:IntArray?,b:IntArray):Float {
+                  if(a==null||a.size!=b.size)return 1f
+                  var sum=0f
+                  for(i in b.indices)sum+=abs(a[i]-b[i])/255f
+                  return (sum/b.size).coerceIn(0f,1f)
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/MiniMapAnalyzer.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.graphics.Bitmap
+          import kotlin.math.*
+
+          object MiniMapAnalyzer {
+              fun questMarker(bitmap:Bitmap):MarkerObservation? {
+                  val w=bitmap.width;val h=bitmap.height
+                  val roiW=(w*.31f).toInt().coerceAtLeast(40)
+                  val roiH=(h*.34f).toInt().coerceAtLeast(40)
+                  val step=max(3,min(w,h)/360)
+                  val gw=max(1,roiW/step);val gh=max(1,roiH/step)
+                  val mask=BooleanArray(gw*gh)
+                  fun idx(x:Int,y:Int)=y*gw+x
+                  for(gy in 0 until gh)for(gx in 0 until gw){
+                      val x=(gx*step).coerceAtMost(w-1);val y=(gy*step).coerceAtMost(h-1)
+                      val c=bitmap.getPixel(x,y)
+                      val r=(c shr 16)and 255;val g=(c shr 8)and 255;val b=c and 255
+                      val yellow=r>178 && g>135 && b<145 && r>g && (r-b)>65 && (g-b)>35
+                      mask[idx(gx,gy)]=yellow
+                  }
+                  val seen=BooleanArray(mask.size)
+                  data class Candidate(val cx:Float,val cy:Float,val count:Int,val score:Float)
+                  val candidates=mutableListOf<Candidate>()
+                  val qx=IntArray(mask.size);val qy=IntArray(mask.size)
+                  for(sy in 0 until gh)for(sx in 0 until gw){
+                      val si=idx(sx,sy);if(!mask[si]||seen[si])continue
+                      var head=0;var tail=0;qx[tail]=sx;qy[tail]=sy;tail++;seen[si]=true
+                      var count=0;var sumX=0f;var sumY=0f;var minX=sx;var maxX=sx;var minY=sy;var maxY=sy
+                      while(head<tail){
+                          val x=qx[head];val y=qy[head];head++;count++;sumX+=x;sumY+=y
+                          minX=min(minX,x);maxX=max(maxX,x);minY=min(minY,y);maxY=max(maxY,y)
+                          val ns=arrayOf(x+1 to y,x-1 to y,x to y+1,x to y-1)
+                          for((nx,ny) in ns)if(nx in 0 until gw && ny in 0 until gh){
+                              val ni=idx(nx,ny);if(mask[ni]&&!seen[ni]){seen[ni]=true;qx[tail]=nx;qy[tail]=ny;tail++}
+                          }
+                      }
+                      if(count !in 2..110)continue
+                      val cx=sumX/count*step;val cy=sumY/count*step
+                      val mapCx=w*.145f;val mapCy=h*.16f
+                      val mapR=min(w*.13f,h*.15f)
+                      val dist=hypot(cx-mapCx,cy-mapCy)
+                      if(dist>mapR*1.45f || dist<mapR*.16f)continue
+                      val bw=(maxX-minX+1).toFloat();val bh=(maxY-minY+1).toFloat()
+                      val compact=(count/(bw*bh)).coerceIn(0f,1f)
+                      val radial=(1f-abs(dist/mapR-.72f)).coerceIn(0f,1f)
+                      val size=(1f-abs(count-12f)/45f).coerceIn(0f,1f)
+                      val score=(.42f*compact+.38f*radial+.20f*size).coerceIn(0f,.98f)
+                      if(score>.36f)candidates+=Candidate(cx,cy,count,score)
+                  }
+                  val best=candidates.maxByOrNull{it.score}?:return null
+                  val mapCx=w*.145f;val mapCy=h*.16f
+                  val angle=Math.toDegrees(atan2((best.cy-mapCy).toDouble(),(best.cx-mapCx).toDouble())).toFloat()
+                  return MarkerObservation(angle,best.score)
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AutopilotAccessibilityService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.accessibilityservice.AccessibilityService
+          import android.accessibilityservice.GestureDescription
+          import android.graphics.Path
+          import android.view.accessibility.AccessibilityEvent
+
+          class AutopilotAccessibilityService:AccessibilityService() {
+              companion object {@Volatile var instance:AutopilotAccessibilityService?=null}
+              override fun onServiceConnected(){instance=this}
+              override fun onDestroy(){if(instance===this)instance=null;super.onDestroy()}
+              override fun onAccessibilityEvent(event:AccessibilityEvent?)=Unit
+              override fun onInterrupt()=Unit
+              fun tap(x:Float,y:Float):Boolean {
+                  val p=Path().apply{moveTo(x,y)}
+                  return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,70)).build(),null,null)
+              }
+              fun swipe(x1:Float,y1:Float,x2:Float,y2:Float,ms:Long=420):Boolean {
+                  val p=Path().apply{moveTo(x1,y1);lineTo(x2,y2)}
+                  return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,ms)).build(),null,null)
+              }
+              fun back(){performGlobalAction(GLOBAL_ACTION_BACK)}
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AgentController.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.content.res.Resources
+
+          object AgentController {
+              private var lastTick=0L
+              fun tick() {
+                  val now=System.currentTimeMillis()
+                  if(now-lastTick<260)return
+                  lastTick=now
+                  if(RuntimeState.userPaused){RuntimeState.mode=AgentMode.PAUSED;RuntimeState.lastAction="사용자 일시정지";return}
+                  val s=RuntimeState.account
+                  val d=GoalPlanner.next(s,RuntimeState.parsedGoal)
+                  RuntimeState.mode=d.mode
+                  if(d.mode==AgentMode.COMPLETE){RuntimeState.lastAction="목표 완료 — 자동 정지";return}
+                  if(!RuntimeState.captureActive){RuntimeState.lastAction="화면 캡처 대기";return}
+                  if(!ActionGate.canAct(s,RuntimeState.dryRun)){RuntimeState.lastAction=d.reason+" [관찰 모드]";return}
+                  val svc=AutopilotAccessibilityService.instance?:run{RuntimeState.lastAction="접근성 서비스 비활성";return}
+                  val action=ActionArbiter.choose(s,d)
+                  if(action.type==AgentActionType.WAIT){RuntimeState.lastAction=action.reason;RuntimeState.lastActionType=AgentActionType.WAIT;return}
+                  if(!ActionScheduler.allow(action.type,now)){return}
+                  val dm=Resources.getSystem().displayMetrics
+                  val w=dm.widthPixels.toFloat();val h=dm.heightPixels.toFloat()
+                  when(action.type){
+                      AgentActionType.DIALOGUE_CHOICE,AgentActionType.INTERACT,AgentActionType.RETRACK_QUEST -> {
+                          val x=(action.x?:.72f)*w;val y=(action.y?:.52f)*h
+                          svc.tap(x,y)
+                      }
+                      AgentActionType.DIALOGUE -> svc.tap(w*.84f,h*.84f)
+                      AgentActionType.REWARD -> svc.tap(w*.50f,h*.84f)
+                      AgentActionType.REVIVE -> svc.tap(w*.50f,h*.68f)
+                      AgentActionType.COMBAT -> {
+                          when(CombatPolicy.choose(s.hpPercent,s.burstReady,s.skillReady)){
+                              CombatAction.DODGE->svc.tap(w*.90f,h*.72f)
+                              CombatAction.BURST->svc.tap(w*.83f,h*.78f)
+                              CombatAction.SKILL->svc.tap(w*.76f,h*.68f)
+                              CombatAction.ATTACK->svc.tap(w*.88f,h*.58f)
+                              else->Unit
+                          }
+                      }
+                      AgentActionType.CAMERA_LEFT -> {
+                          // Camera steering: swipe world view right so camera rotates left.
+                          svc.swipe(w*.58f,h*.46f,w*.70f,h*.46f,320)
+                      }
+                      AgentActionType.CAMERA_RIGHT -> {
+                          // Camera steering: swipe world view left so camera rotates right.
+                          svc.swipe(w*.70f,h*.46f,w*.58f,h*.46f,320)
+                      }
+                      AgentActionType.MOVE_FORWARD -> {
+                          // Never steer with the joystick anymore. Forward only.
+                          val cx=w*.18f;val cy=h*.78f
+                          svc.swipe(cx,cy,cx,cy-h*.115f,680)
+                      }
+                      AgentActionType.RECOVER -> {
+                          NavigationMemory.reset()
+                          svc.swipe(w*.72f,h*.48f,w*.58f,h*.48f,360)
+                      }
+                      else->Unit
+                  }
+                  RuntimeState.lastActionType=action.type
+                  RuntimeState.lastActionAt=now
+                  RuntimeState.lastAction=action.type.name+" — "+action.reason+" ("+(action.confidence*100).toInt()+"%)"
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/CaptureService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.app.*
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.PixelFormat
+          import android.hardware.display.DisplayManager
+          import android.media.ImageReader
+          import android.media.projection.MediaProjection
+          import android.media.projection.MediaProjectionManager
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          import com.google.mlkit.vision.common.InputImage
+          import com.google.mlkit.vision.text.TextRecognition
+          import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+          import java.util.concurrent.atomic.AtomicBoolean
+
+          class CaptureService:Service() {
+              private val recognizer=TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+              private var reader:ImageReader?=null
+              private var lastFrameAt=0L
+              private val processing=AtomicBoolean(false)
+              private var lastMotion:IntArray?=null
+              private var stuckFrames=0
+              override fun onBind(intent:Intent?):IBinder?=null
+
+              override fun onCreate(){
+                  super.onCreate()
+                  getSystemService(NotificationManager::class.java)
+                      .createNotificationChannel(NotificationChannel("ga12","Genshin AutoPilot",NotificationManager.IMPORTANCE_LOW))
+              }
+
+              override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
+                  startForeground(12,Notification.Builder(this,"ga12")
+                      .setContentTitle("Genshin AutoPilot v1.2.1")
+                      .setContentText("Temporal Vision Agent 실행 중")
+                      .setSmallIcon(android.R.drawable.ic_media_play).build())
+                  val code=intent?.getIntExtra("resultCode",Activity.RESULT_CANCELED)?:return START_NOT_STICKY
+                  val data=intent.getParcelableExtra<Intent>("data")?:return START_NOT_STICKY
+                  val mpm=getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  val projection=mpm.getMediaProjection(code,data)
+                  RuntimeState.captureActive=true
+                  projection.registerCallback(object:MediaProjection.Callback(){
+                      override fun onStop(){reader?.close();reader=null;RuntimeState.captureActive=false;RuntimeState.lastAction="화면 캡처 종료"}
+                  },Handler(Looper.getMainLooper()))
+                  val dm=resources.displayMetrics
+                  reader=ImageReader.newInstance(dm.widthPixels,dm.heightPixels,PixelFormat.RGBA_8888,2)
+                  projection.createVirtualDisplay("GA12",dm.widthPixels,dm.heightPixels,dm.densityDpi,
+                      DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader!!.surface,null,null)
+
+                  reader!!.setOnImageAvailableListener({r->
+                      val now=System.currentTimeMillis()
+                      if(now-lastFrameAt<420 || !processing.compareAndSet(false,true)){
+                          r.acquireLatestImage()?.close();return@setOnImageAvailableListener
+                      }
+                      lastFrameAt=now
+                      val image=r.acquireLatestImage()
+                      if(image==null){processing.set(false);return@setOnImageAvailableListener}
+                      try{
+                          val p=image.planes[0]
+                          val pad=p.rowStride-p.pixelStride*image.width
+                          val bmp=Bitmap.createBitmap(image.width+pad/p.pixelStride,image.height,Bitmap.Config.ARGB_8888)
+                          bmp.copyPixelsFromBuffer(p.buffer)
+                          val cropped=Bitmap.createBitmap(bmp,0,0,image.width,image.height)
+                          val markerObs=MiniMapAnalyzer.questMarker(cropped)
+                          val stable=NavigationMemory.update(markerObs)
+                          val enemy=CombatVisualAnalyzer.enemyConfidence(cropped)
+                          val motionSample=FrameMotionAnalyzer.sample(cropped)
+                          val motion=FrameMotionAnalyzer.difference(lastMotion,motionSample)
+                          if(RuntimeState.lastActionType==AgentActionType.MOVE_FORWARD && motion<.018f) stuckFrames++ else if(motion>.03f) stuckFrames=0
+                          lastMotion=motionSample
+
+                          recognizer.process(InputImage.fromBitmap(cropped,0))
+                              .addOnSuccessListener{result->
+                                  val els=mutableListOf<OcrElement>()
+                                  result.textBlocks.forEach{block->block.lines.forEach{line->
+                                      val b=line.boundingBox
+                                      if(b!=null)els+=OcrElement(
+                                          line.text,
+                                          ((b.centerX().toFloat()/cropped.width)).coerceIn(0f,1f),
+                                          ((b.centerY().toFloat()/cropped.height)).coerceIn(0f,1f),
+                                          (b.width().toFloat()/cropped.width).coerceIn(0f,1f),
+                                          (b.height().toFloat()/cropped.height).coerceIn(0f,1f)
+                                      )
+                                  }}
+                                  val sem=SemanticUiDetector.detect(els)
+                                  var base=ScreenInterpreter.fromText(result.text)
+                                  if(sem.dialogueChoiceConfidence>.78f)base=base.copy(screen=ScreenType.DIALOGUE)
+                                  else if(enemy>.76f && base.screen==ScreenType.WORLD)base=base.copy(screen=ScreenType.BATTLE)
+                                  RuntimeState.account=base.copy(
+                                      miniMapDirection=stable?.angle,
+                                      markerConfidence=stable?.confidence?:0f,
+                                      markerStable=stable?.stable==true,
+                                      oscillating=stable?.oscillating==true,
+                                      enemyConfidence=enemy,
+                                      interactionConfidence=sem.interactionConfidence,
+                                      interactionX=sem.interactionX,interactionY=sem.interactionY,
+                                      dialogueChoiceConfidence=sem.dialogueChoiceConfidence,
+                                      dialogueChoiceX=sem.dialogueChoiceX,dialogueChoiceY=sem.dialogueChoiceY,
+                                      questTextConfidence=sem.questTextConfidence,
+                                      questTextX=sem.questTextX,questTextY=sem.questTextY,
+                                      motionScore=motion,stuckFrames=stuckFrames,
+                                      steeringMode=SteeringController.decide(stable?.angle,stable?.confidence?:0f,stable?.stable==true,stable?.oscillating==true).mode,
+                                      headingError=stable?.angle?.let{a->
+                                          var e=a+90f
+                                          while(e>180f)e-=360f
+                                          while(e<-180f)e+=360f
+                                          e
+                                      },
+                                      headingLocked=(stable?.stable==true && stable.angle.let{a-> kotlin.math.abs(((a+90f+540f)%360f)-180f)}<16f)
+                                  )
+                                  AgentController.tick()
+                              }
+                              .addOnCompleteListener{
+                                  processing.set(false)
+                                  cropped.recycle();bmp.recycle()
+                              }
+                      }catch(t:Throwable){
+                          processing.set(false)
+                      }finally{image.close()}
+                  },Handler(Looper.getMainLooper()))
+                  return START_STICKY
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/MainActivity.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.content.*
+          import android.graphics.Color
+          import android.graphics.drawable.GradientDrawable
+          import android.media.projection.MediaProjectionManager
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.*
+          import android.widget.*
+          import androidx.activity.ComponentActivity
+          import androidx.activity.result.contract.ActivityResultContracts
+
+          class MainActivity:ComponentActivity() {
+              private lateinit var status:TextView
+              private lateinit var goalInput:EditText
+              private lateinit var analysis:TextView
+              private val prefs by lazy{getSharedPreferences("ga11",MODE_PRIVATE)}
+
+              private val captureLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){r->
+                  if(r.resultCode==RESULT_OK && r.data!=null) {
+                      startForegroundService(Intent(this,CaptureService::class.java)
+                          .putExtra("resultCode",r.resultCode).putExtra("data",r.data))
+                      RuntimeState.sessionStarted=System.currentTimeMillis()
+                      RuntimeState.captureActive=true
+                      RuntimeState.userPaused=false
+                      RuntimeState.dryRun=false
+                      RuntimeState.mode=AgentMode.AUTOPLAY
+                      RuntimeState.pendingAutostart=false
+                      RuntimeState.lastAction="AutoPilot 시작 — 첫 화면 분석 대기"
+                      toast("AutoPilot 시작됨")
+                      refresh()
+                      window.decorView.postDelayed({ launchGenshin() },700)
+                  } else {
+                      RuntimeState.pendingAutostart=false
+                      RuntimeState.lastAction="화면 공유 권한이 거부됨"
+                      toast("화면 공유 권한이 필요해")
+                      refresh()
+                  }
+              }
+
+              override fun onCreate(savedInstanceState:Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val bg=Color.rgb(8,11,22)
+                  val panel=Color.rgb(20,24,43)
+                  val accent=Color.rgb(140,140,255)
+                  val textColor=Color.rgb(238,240,255)
+
+                  val root=LinearLayout(this).apply {
+                      orientation=LinearLayout.VERTICAL
+                      setPadding(24,28,24,32)
+                      setBackgroundColor(bg)
+                  }
+
+                  root.addView(ImageView(this).apply {
+                      setImageResource(com.seondwaeji.genshinautopilot.R.drawable.autopilot_icon)
+                      scaleType=ImageView.ScaleType.CENTER_CROP
+                      adjustViewBounds=true
+                      layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(190)).apply{bottomMargin=14}
+                  })
+
+                  root.addView(TextView(this).apply {
+                      setTextColor(textColor);textSize=26f;text="GENSHIN AUTOPILOT  •  v1.2.1"
+                      setPadding(4,8,4,8)
+                  })
+                  root.addView(TextView(this).apply {
+                      setTextColor(Color.rgb(170,178,214));textSize=14f
+                      text="v1.2.1 Steering Lock: 조이스틱은 전진만, 방향 수정은 카메라로 처리해 좌우 진동을 차단합니다."
+                  })
+
+                  goalInput=EditText(this).apply {
+                      hint="예: AR18까지 올리고 프롤로그 3막을 깨. 치치를 40레벨 우선 육성. 원석은 쓰지 마."
+                      setHintTextColor(Color.rgb(125,132,165));setTextColor(textColor)
+                      minLines=3;maxLines=6;setPadding(18,16,18,16)
+                      background=rounded(panel,22f)
+                      setText(prefs.getString("goal_text",""))
+                  }
+                  root.addView(goalInput,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=16})
+
+                  val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+                  row.addView(button("목표 분석",accent){analyzeGoal()},LinearLayout.LayoutParams(0,dp(52),1f).apply{rightMargin=6})
+                  row.addView(button("목표 저장",Color.rgb(61,67,102)){saveGoal()},LinearLayout.LayoutParams(0,dp(52),1f).apply{leftMargin=6})
+                  root.addView(row,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=10})
+
+                  analysis=TextView(this).apply {
+                      setTextColor(textColor);textSize=15f;setPadding(16,16,16,16);background=rounded(panel,18f)
+                  }
+                  root.addView(analysis,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=12})
+
+                  status=TextView(this).apply {
+                      setTextColor(Color.rgb(205,211,240));textSize=14f;setPadding(16,16,16,16);background=rounded(panel,18f)
+                  }
+                  root.addView(status,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=12})
+
+                  root.addView(button("▶ AUTOPILOT START",accent){startAutopilot()})
+                  root.addView(button("접근성 설정",Color.rgb(51,59,92)){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))})
+                  root.addView(button("화면 스캔만 시작",Color.rgb(51,59,92)){startScanOnly()})
+                  root.addView(button("DRY RUN ON / OFF",Color.rgb(51,59,92)){RuntimeState.dryRun=!RuntimeState.dryRun;refresh()})
+                  root.addView(button("■ EMERGENCY STOP",Color.rgb(120,46,66)){emergencyStop()})
+
+                  setContentView(ScrollView(this).apply{addView(root)})
+                  analyzeGoal()
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  if(RuntimeState.pendingAutostart && isAccessibilityReady()) {
+                      RuntimeState.pendingAutostart=false
+                      requestCaptureForAutoplay()
+                  }
+                  if(::status.isInitialized) refresh()
+              }
+
+              private fun isAccessibilityReady():Boolean {
+                  if(AutopilotAccessibilityService.instance!=null) return true
+                  val enabled=Settings.Secure.getString(contentResolver,Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+                  val mine=ComponentName(this,AutopilotAccessibilityService::class.java).flattenToString()
+                  return enabled.split(':').any{it.equals(mine,ignoreCase=true)}
+              }
+
+              private fun startAutopilot() {
+                  analyzeGoal()
+                  RuntimeState.userPaused=false
+                  RuntimeState.pendingAutostart=true
+                  if(!isAccessibilityReady()) {
+                      RuntimeState.lastAction="접근성 권한 대기"
+                      toast("접근성을 켜고 돌아오면 자동으로 계속할게")
+                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                      refresh()
+                      return
+                  }
+                  requestCaptureForAutoplay()
+              }
+
+              private fun requestCaptureForAutoplay() {
+                  RuntimeState.pendingAutostart=false
+                  RuntimeState.dryRun=false
+                  RuntimeState.userPaused=false
+                  RuntimeState.lastAction="화면 공유 권한 대기"
+                  val mpm=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  captureLauncher.launch(mpm.createScreenCaptureIntent())
+                  refresh()
+              }
+
+              private fun startScanOnly() {
+                  analyzeGoal()
+                  RuntimeState.dryRun=true
+                  RuntimeState.userPaused=false
+                  val mpm=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  captureLauncher.launch(mpm.createScreenCaptureIntent())
+              }
+
+              private fun emergencyStop() {
+                  RuntimeState.userPaused=true
+                  RuntimeState.pendingAutostart=false
+                  RuntimeState.mode=AgentMode.PAUSED
+                  RuntimeState.dryRun=true
+                  RuntimeState.captureActive=false
+                  stopService(Intent(this,CaptureService::class.java))
+                  RuntimeState.lastAction="EMERGENCY STOP — 자동 입력 정지"
+                  toast("AutoPilot 정지")
+                  refresh()
+              }
+
+              private fun launchGenshin() {
+                  val intent=packageManager.getLaunchIntentForPackage("com.miHoYo.GenshinImpact")
+                  if(intent!=null) {
+                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                      startActivity(intent)
+                  } else {
+                      toast("원신 실행은 직접 해줘 — AutoPilot은 계속 대기 중")
+                  }
+              }
+
+              private fun analyzeGoal() {
+                  val raw=goalInput.text?.toString().orEmpty()
+                  RuntimeState.currentGoalText=raw
+                  RuntimeState.parsedGoal=GoalIntelligence.parse(raw)
+                  analysis.text="AI GOAL ANALYSIS\n"+GoalIntelligence.summarize(RuntimeState.parsedGoal)
+                  refresh()
+              }
+
+              private fun saveGoal() {
+                  prefs.edit().putString("goal_text",goalInput.text?.toString().orEmpty()).apply()
+                  analyzeGoal()
+                  toast("Goal 저장 완료")
+              }
+
+              private fun refresh() {
+                  val s=RuntimeState.account
+                  val d=GoalPlanner.next(s,RuntimeState.parsedGoal)
+                  val party=PartyAdvisor.recommend(s,RuntimeState.parsedGoal.priorityCharacter)
+                  status.text=
+                      "MODE  "+RuntimeState.mode+
+                      "\nNEXT  "+d.subGoal+
+                      "\nWHY   "+d.reason+
+                      "\nAR    "+(s.ar?:"?")+
+                      "   PROLOGUE "+s.prologueAct+
+                      "\nSNEZHNAYA "+s.snezhnayaPreviewEntered+
+                      "   ACT1 "+s.act1Complete+"   ACT2 "+s.act2Complete+
+                      "\nSCREEN "+s.screen+"   CONF "+((s.confidence*100).toInt())+"%"+
+                      "\nMARKER "+(s.miniMapDirection?:"?")+"°  CONF "+((s.markerConfidence*100).toInt())+"%  STABLE "+s.markerStable+
+                      "\nSTEER "+s.steeringMode+"  HEADING ERR "+(s.headingError?:"?")+"  LOCK "+s.headingLocked+
+                      "\nOSCILLATING "+s.oscillating+"  MOTION "+String.format("%.3f",s.motionScore)+"  STUCK "+s.stuckFrames+
+                      "\nINTERACT "+((s.interactionConfidence*100).toInt())+"%  ENEMY "+((s.enemyConfidence*100).toInt())+"%"+
+                      "\nACTION "+RuntimeState.lastActionType+
+                      "\nPRIMOGEMS "+(s.primogems?:"?")+"   MORA "+(s.mora?:"?")+"   RESIN "+(s.resin?:"?")+
+                      "\nPARTY ADVICE "+party.joinToString(" / ")+
+                      "\nCAPTURE "+RuntimeState.captureActive+
+                      "   PAUSED "+RuntimeState.userPaused+
+                      "\nDRY RUN "+RuntimeState.dryRun+
+                      "\nLAST  "+RuntimeState.lastAction+
+                      "\n\nWISH / PRIMOGEM SPENDING: LOCKED BY DEFAULT"
+              }
+
+              private fun button(label:String,color:Int,action:()->Unit)=Button(this).apply {
+                  text=label;isAllCaps=false;setTextColor(Color.WHITE);textSize=15f
+                  backgroundTintList=android.content.res.ColorStateList.valueOf(color)
+                  setOnClickListener{action()}
+                  layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(52)).apply{topMargin=10}
+              }
+              private fun rounded(color:Int,r:Float)=GradientDrawable().apply{setColor(color);cornerRadius=r}
+              private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
+              private fun toast(s:String)=Toast.makeText(this,s,Toast.LENGTH_SHORT).show()
+          }
+          EOT
+
+      - name: Unit tests GREEN
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Lint
+        run: gradle :app:lintDebug --stacktrace
+
+      - name: Build APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK and icon
+        shell: bash
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          test -s app/src/main/res/drawable-nodpi/autopilot_icon.jpg
+          ls -lh app/build/outputs/apk/debug/app-debug.apk app/src/main/res/drawable-nodpi/autopilot_icon.jpg
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenshinAutopilot-v1.2.1-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
