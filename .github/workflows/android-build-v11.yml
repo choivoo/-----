@@ -733,7 +733,7 @@ jobs:
                   val bg=Color.rgb(8,11,22)
                   val panel=Color.rgb(20,24,43)
                   val accent=Color.rgb(140,140,255)
-                  val text=Color.rgb(238,240,255)
+                  val textColor=Color.rgb(238,240,255)
 
                   val root=LinearLayout(this).apply {
                       orientation=LinearLayout.VERTICAL
@@ -749,7 +749,7 @@ jobs:
                   })
 
                   root.addView(TextView(this).apply {
-                      setTextColor(text);textSize=26f;text="GENSHIN AUTOPILOT  •  v1.1"
+                      setTextColor(textColor);textSize=26f;text="GENSHIN AUTOPILOT  •  v1.1"
                       setPadding(4,8,4,8)
                   })
                   root.addView(TextView(this).apply {
@@ -772,7 +772,7 @@ jobs:
                   root.addView(row,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=10})
 
                   analysis=TextView(this).apply {
-                      setTextColor(text);textSize=15f;setPadding(16,16,16,16);background=rounded(panel,18f)
+                      setTextColor(textColor);textSize=15f;setPadding(16,16,16,16);background=rounded(panel,18f)
                   }
                   root.addView(analysis,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=12})
 
