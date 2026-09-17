@@ -1,0 +1,77 @@
+name: Build Genshin Autopilot v0.9 Fixed
+
+on:
+  push:
+    branches: [ v0.9 ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract generator scripts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('.github/workflows/android-build-v09.yml').read_text()
+          def extract(start_name, end_name, out):
+              start=f'      - name: {start_name}\n'
+              i=text.index(start)
+              run=text.index('        run: |\n', i)+len('        run: |\n')
+              j=text.index(f'      - name: {end_name}\n', run)
+              block=text[run:j]
+              lines=[]
+              for line in block.splitlines():
+                  lines.append(line[10:] if line.startswith('          ') else line)
+              Path(out).write_text('\n'.join(lines)+'\n')
+          extract('Generate base Android project and RED tests','Verify RED phase fails before implementation','/tmp/base.sh')
+          extract('Generate v0.9 implementation','Run unit tests GREEN','/tmp/impl.sh')
+          PY
+          chmod +x /tmp/base.sh /tmp/impl.sh
+
+      - name: Generate base and confirm RED
+        shell: bash
+        run: |
+          /tmp/base.sh
+          set +e
+          gradle :app:testDebugUnitTest > red.log 2>&1
+          code=$?
+          cat red.log
+          test "$code" -ne 0
+          echo 'RED confirmed'
+
+      - name: Generate implementation and apply build fix
+        shell: bash
+        run: |
+          /tmp/impl.sh
+          sed -i 's/class MainActivity : Activity()/class MainActivity : androidx.activity.ComponentActivity()/' app/src/main/java/com/seondwaeji/genshinautopilot/MainActivity.kt
+          grep -n 'class MainActivity' app/src/main/java/com/seondwaeji/genshinautopilot/MainActivity.kt
+
+      - name: Unit tests GREEN
+        run: gradle :app:testDebugUnitTest --stacktrace
+      - name: Lint
+        run: gradle :app:lintDebug --stacktrace
+      - name: Build APK
+        run: gradle :app:assembleDebug --stacktrace
+      - name: Verify APK
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenshinAutopilot-v0.9-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
