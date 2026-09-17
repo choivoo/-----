@@ -283,24 +283,29 @@ jobs:
               }
 
               @Test fun steeringTurnsCameraBeforeMoving() {
-                  val left=SteeringController.decide(markerAngle=-150f,confidence=.9f,stable=true,oscillating=false)
-                  val right=SteeringController.decide(markerAngle=-30f,confidence=.9f,stable=true,oscillating=false)
+                  SteeringController.reset()
+                  val left=SteeringController.decide(markerAngle=-150f,confidence=.9f,stable=true,oscillating=false,now=10000L)
+                  SteeringController.reset()
+                  val right=SteeringController.decide(markerAngle=-30f,confidence=.9f,stable=true,oscillating=false,now=10000L)
                   assertTrue(left.mode==SteeringMode.TURN_LEFT || left.mode==SteeringMode.TURN_RIGHT)
                   assertTrue(right.mode==SteeringMode.TURN_LEFT || right.mode==SteeringMode.TURN_RIGHT)
               }
 
               @Test fun steeringMovesForwardOnlyWhenMarkerNearTop() {
-                  val s=SteeringController.decide(markerAngle=-92f,confidence=.9f,stable=true,oscillating=false)
+                  SteeringController.reset()
+                  val s=SteeringController.decide(markerAngle=-92f,confidence=.9f,stable=true,oscillating=false,now=10000L)
                   assertEquals(SteeringMode.FORWARD,s.mode)
                   assertTrue(kotlin.math.abs(s.error)<18f)
               }
 
               @Test fun steeringHoldsWhenOscillating() {
-                  val s=SteeringController.decide(markerAngle=20f,confidence=.9f,stable=true,oscillating=true)
+                  SteeringController.reset()
+                  val s=SteeringController.decide(markerAngle=20f,confidence=.9f,stable=true,oscillating=true,now=10000L)
                   assertEquals(SteeringMode.HOLD,s.mode)
               }
 
               @Test fun arbiterMapsSteeringToCameraOrForward() {
+                  SteeringController.reset()
                   val base=Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"test")
                   val left=AccountState(screen=ScreenType.WORLD,confidence=.95f,markerStable=true,markerConfidence=.9f,miniMapDirection=-150f)
                   val forward=AccountState(screen=ScreenType.WORLD,confidence=.95f,markerStable=true,markerConfidence=.9f,miniMapDirection=-90f)
@@ -711,6 +716,7 @@ jobs:
                   while(x<-180f)x+=360f
                   return x
               }
+              @Synchronized fun reset(){ lastTurn=SteeringMode.SEARCH; turnSince=0L }
               @Synchronized fun decide(markerAngle:Float?,confidence:Float,stable:Boolean,oscillating:Boolean,now:Long=System.currentTimeMillis()):SteeringDecision {
                   if(markerAngle==null || confidence<.60f || !stable) return SteeringDecision(SteeringMode.SEARCH,0f,confidence)
                   if(oscillating) return SteeringDecision(SteeringMode.HOLD,0f,confidence)
