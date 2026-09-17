@@ -1,0 +1,333 @@
+name: Build Genshin Autopilot APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate Android project
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/seondwaeji/genshinautopilot
+          mkdir -p app/src/main/res/xml app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOT'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "GenshinAutopilot"
+          include(":app")
+          EOT
+
+          cat > build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOT
+
+          cat > gradle.properties <<'EOT'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOT
+
+          cat > app/build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.seondwaeji.genshinautopilot"
+              compileSdk = 35
+              defaultConfig {
+                  applicationId = "com.seondwaeji.genshinautopilot"
+                  minSdk = 31
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "0.1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          EOT
+
+          cat > app/src/main/res/values/strings.xml <<'EOT'
+          <resources>
+              <string name="app_name">Genshin Autopilot</string>
+              <string name="accessibility_description">Allows the Autopilot prototype to perform user-approved touch gestures.</string>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/values/themes.xml <<'EOT'
+          <resources>
+              <style name="Theme.GenshinAutopilot" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#3F51B5</item>
+              </style>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:description="@string/accessibility_description"
+              android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:notificationTimeout="100"
+              android:canPerformGestures="true"
+              android:canRetrieveWindowContent="true" />
+          EOT
+
+          cat > app/src/main/AndroidManifest.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <application
+                  android:allowBackup="true"
+                  android:label="@string/app_name"
+                  android:theme="@style/Theme.GenshinAutopilot">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".AutopilotAccessibilityService"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_service_config" />
+                  </service>
+              </application>
+          </manifest>
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AutopilotAccessibilityService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.accessibilityservice.AccessibilityService
+          import android.accessibilityservice.GestureDescription
+          import android.graphics.Path
+          import android.view.accessibility.AccessibilityEvent
+
+          class AutopilotAccessibilityService : AccessibilityService() {
+              companion object {
+                  @Volatile var instance: AutopilotAccessibilityService? = null
+              }
+
+              override fun onServiceConnected() {
+                  super.onServiceConnected()
+                  instance = this
+              }
+
+              override fun onDestroy() {
+                  if (instance === this) instance = null
+                  super.onDestroy()
+              }
+
+              override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+              override fun onInterrupt() = Unit
+
+              fun tap(x: Float, y: Float): Boolean {
+                  val path = Path().apply { moveTo(x, y) }
+                  val gesture = GestureDescription.Builder()
+                      .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
+                      .build()
+                  return dispatchGesture(gesture, null, null)
+              }
+
+              fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long = 400): Boolean {
+                  val path = Path().apply { moveTo(x1, y1); lineTo(x2, y2) }
+                  val gesture = GestureDescription.Builder()
+                      .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+                      .build()
+                  return dispatchGesture(gesture, null, null)
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AgentState.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          enum class ScreenType { WORLD, DIALOGUE, QUEST_MENU, MAP, BATTLE, LOADING, UNKNOWN }
+
+          data class GameState(
+              val adventureRank: Int? = null,
+              val screen: ScreenType = ScreenType.UNKNOWN,
+              val goal: String = "Reach AR18",
+              val subGoal: String = "Continue Mondstadt Archon Quest",
+              val dryRun: Boolean = true,
+              val primogemsLocked: Boolean = true,
+              val intertwinedFatesLocked: Boolean = true,
+              val confidence: Float = 0f
+          )
+
+          object AgentState {
+              @Volatile var current = GameState()
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/MainActivity.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.view.ViewGroup
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+
+          class MainActivity : Activity() {
+              private lateinit var status: TextView
+              private var dryRun = true
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  title = "Genshin Autopilot"
+
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(40, 60, 40, 40)
+                      setBackgroundColor(Color.rgb(245, 247, 252))
+                  }
+
+                  val titleView = TextView(this).apply {
+                      text = "GENSHIN AUTOPILOT v0.1"
+                      textSize = 24f
+                      setTextColor(Color.rgb(20, 25, 40))
+                      gravity = Gravity.CENTER
+                  }
+                  root.addView(titleView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                  status = TextView(this).apply {
+                      textSize = 17f
+                      setTextColor(Color.DKGRAY)
+                      setPadding(0, 50, 0, 30)
+                  }
+                  root.addView(status)
+
+                  root.addView(button("OPEN ACCESSIBILITY SETTINGS") {
+                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                  })
+
+                  root.addView(button("ANALYZE / DRY RUN") {
+                      dryRun = true
+                      AgentState.current = AgentState.current.copy(
+                          dryRun = true,
+                          screen = ScreenType.UNKNOWN,
+                          confidence = 0.50f,
+                          subGoal = "Screen capture/vision calibration required"
+                      )
+                      refresh()
+                  })
+
+                  root.addView(button("TEST TOUCH (center)") {
+                      if (dryRun) {
+                          AgentState.current = AgentState.current.copy(subGoal = "DRY RUN blocked touch action")
+                      } else {
+                          val dm = resources.displayMetrics
+                          val ok = AutopilotAccessibilityService.instance?.tap(dm.widthPixels / 2f, dm.heightPixels / 2f) ?: false
+                          AgentState.current = AgentState.current.copy(subGoal = if (ok) "Test tap dispatched" else "Accessibility service not enabled")
+                      }
+                      refresh()
+                  })
+
+                  root.addView(button("ENABLE TOUCH TEST MODE") {
+                      dryRun = false
+                      AgentState.current = AgentState.current.copy(dryRun = false, subGoal = "Touch test mode enabled")
+                      refresh()
+                  })
+
+                  root.addView(button("STOP / RETURN TO DRY RUN") {
+                      dryRun = true
+                      AgentState.current = AgentState.current.copy(dryRun = true, subGoal = "Paused")
+                      refresh()
+                  })
+
+                  setContentView(root)
+                  refresh()
+              }
+
+              private fun button(label: String, action: () -> Unit): Button = Button(this).apply {
+                  text = label
+                  isAllCaps = false
+                  setOnClickListener { action() }
+                  val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                  lp.setMargins(0, 12, 0, 12)
+                  layoutParams = lp
+              }
+
+              private fun refresh() {
+                  val s = AgentState.current
+                  status.text = """
+                      Goal: ${s.goal}
+                      SubGoal: ${s.subGoal}
+                      Screen: ${s.screen}
+                      Confidence: ${(s.confidence * 100).toInt()}%
+                      Dry run: ${s.dryRun}
+                      Primogems: LOCKED
+                      Intertwined Fates: LOCKED
+
+                      v0.1 is a safe starter build. Vision-based quest navigation is not calibrated yet.
+                  """.trimIndent()
+              }
+          }
+          EOT
+
+      - name: Run Gradle checks
+        run: gradle :app:lintDebug --stacktrace
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK exists
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenshinAutopilot-v0.1-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
