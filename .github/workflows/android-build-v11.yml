@@ -759,7 +759,7 @@ jobs:
 
                   goalInput=EditText(this).apply {
                       hint="예: AR18까지 올리고 프롤로그 3막을 깨. 치치를 40레벨 우선 육성. 원석은 쓰지 마."
-                      setHintTextColor(Color.rgb(125,132,165));setTextColor(text)
+                      setHintTextColor(Color.rgb(125,132,165));setTextColor(textColor)
                       minLines=3;maxLines=6;setPadding(18,16,18,16)
                       background=rounded(panel,22f)
                       setText(prefs.getString("goal_text",""))
