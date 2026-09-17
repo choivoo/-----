@@ -579,18 +579,12 @@ jobs:
               fun update(h:HudSnapshot) {
                   if(root==null)show()
                   body?.text=
-                      "MODE   "+h.mode+"
-"+
-                      "GOAL   "+h.goal+"
-"+
-                      "AI 판단  "+h.judgement+"
-"+
-                      "NEXT   "+h.next+"
-"+
-                      "ACTION "+h.action+"
-"+
-                      "CONF   "+h.confidence+"
-"+
+                      "MODE   "+h.mode+"\\n"+
+                      "GOAL   "+h.goal+"\\n"+
+                      "AI 판단  "+h.judgement+"\\n"+
+                      "NEXT   "+h.next+"\\n"+
+                      "ACTION "+h.action+"\\n"+
+                      "CONF   "+h.confidence+"\\n"+
                       "GUARD  "+h.guard
               }
 
