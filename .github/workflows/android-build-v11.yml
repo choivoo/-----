@@ -1,0 +1,869 @@
+name: Build Genshin Autopilot v1.1
+
+on:
+  push:
+    branches: [ v1.1 ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate project and RED tests
+        shell: bash
+        run: |
+          rm -rf app settings.gradle.kts build.gradle.kts gradle.properties
+          mkdir -p app/src/main/java/com/seondwaeji/genshinautopilot
+          mkdir -p app/src/test/java/com/seondwaeji/genshinautopilot
+          mkdir -p app/src/main/res/xml app/src/main/res/values app/src/main/res/drawable-nodpi
+
+          cat > settings.gradle.kts <<'EOT'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "GenshinAutopilot"
+          include(":app")
+          EOT
+
+          cat > build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOT
+
+          cat > gradle.properties <<'EOT'
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOT
+
+          cat > app/build.gradle.kts <<'EOT'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.seondwaeji.genshinautopilot"
+              compileSdk = 35
+              defaultConfig {
+                  applicationId = "com.seondwaeji.genshinautopilot"
+                  minSdk = 31
+                  targetSdk = 35
+                  versionCode = 11
+                  versionName = "1.1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.activity:activity-ktx:1.10.0")
+              implementation("com.google.mlkit:text-recognition:16.0.1")
+              testImplementation("junit:junit:4.13.2")
+          }
+          EOT
+
+          cat > app/src/main/AndroidManifest.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <application
+                  android:allowBackup="true"
+                  android:label="@string/app_name"
+                  android:icon="@drawable/autopilot_icon"
+                  android:roundIcon="@drawable/autopilot_icon"
+                  android:theme="@style/Theme.GenshinAutopilot">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".AutopilotAccessibilityService"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service_config" />
+                  </service>
+                  <service android:name=".CaptureService" android:foregroundServiceType="mediaProjection" android:exported="false" />
+              </application>
+          </manifest>
+          EOT
+
+          cat > app/src/main/res/values/strings.xml <<'EOT'
+          <resources>
+              <string name="app_name">Genshin AutoPilot v1.1</string>
+              <string name="accessibility_description">Executes user-enabled gestures for the selected AutoPilot goal.</string>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/values/themes.xml <<'EOT'
+          <resources>
+              <style name="Theme.GenshinAutopilot" parent="android:style/Theme.Material.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:statusBarColor">#080B16</item>
+                  <item name="android:navigationBarColor">#080B16</item>
+                  <item name="android:colorAccent">#8C8CFF</item>
+                  <item name="android:windowSplashScreenBackground">#080B16</item>
+                  <item name="android:windowSplashScreenAnimatedIcon">@drawable/autopilot_icon</item>
+              </style>
+          </resources>
+          EOT
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml <<'EOT'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:description="@string/accessibility_description"
+              android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:notificationTimeout="100"
+              android:canPerformGestures="true"
+              android:canRetrieveWindowContent="true" />
+          EOT
+
+          base64 -d .github/assets/autopilot_icon.b64 > app/src/main/res/drawable-nodpi/autopilot_icon.jpg
+
+          cat > app/src/test/java/com/seondwaeji/genshinautopilot/V11LogicTest.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import org.junit.Assert.*
+          import org.junit.Test
+
+          class V11LogicTest {
+              @Test fun emptyGoalFallsBackToAuto() {
+                  val g = GoalIntelligence.parse("   ")
+                  assertTrue(g.autoPriority)
+                  assertTrue(g.lockPrimogems)
+                  assertTrue(g.lockWishes)
+              }
+
+              @Test fun koreanNaturalGoalIsParsed() {
+                  val g = GoalIntelligence.parse("AR18까지 올리고 프롤로그 3막을 깨. 스네즈나야 7장 2막까지 진행하고 원석은 쓰지 마. 치치를 40레벨 우선 육성하고 완료하면 멈춰.")
+                  assertEquals(18, g.targetAr)
+                  assertEquals(3, g.targetPrologueAct)
+                  assertEquals(2, g.targetChapter7Act)
+                  assertEquals("치치", g.priorityCharacter)
+                  assertEquals(40, g.priorityCharacterLevel)
+                  assertTrue(g.stopWhenComplete)
+                  assertTrue(g.lockPrimogems)
+              }
+
+              @Test fun customGoalCanRequestStoryWithoutAr() {
+                  val g = GoalIntelligence.parse("스네즈나야 미리보기까지만 진행하고 멈춰")
+                  assertTrue(g.targetSnezhnayaPreview)
+                  assertTrue(g.stopWhenComplete)
+              }
+
+              @Test fun customGoalStillNeverAutoWishesByDefault() {
+                  assertTrue(GoalIntelligence.parse("캐릭터를 키워줘").lockWishes)
+              }
+
+              @Test fun plannerUsesCustomArGoal() {
+                  val goal = ParsedGoal(targetAr=20, autoPriority=false)
+                  val d = GoalPlanner.next(AccountState(ar=12), goal)
+                  assertEquals(SubGoal.REACH_TARGET_AR, d.subGoal)
+              }
+
+              @Test fun autoPlannerUsesDefaultStoryRoute() {
+                  val d = GoalPlanner.next(AccountState(ar=18, prologueAct=3, snezhnayaPreviewEntered=true, act1Complete=true, act2Complete=false), ParsedGoal(autoPriority=true))
+                  assertEquals(SubGoal.COMPLETE_ACT_2, d.subGoal)
+              }
+
+              @Test fun growthPlannerPrioritizesNamedCharacter() {
+                  val goal = ParsedGoal(priorityCharacter="치치", priorityCharacterLevel=40, autoPriority=false)
+                  val s = AccountState(ar=18, characterLevels=mapOf("치치" to 20))
+                  assertEquals(SubGoal.GROW_PRIORITY_CHARACTER, GoalPlanner.next(s, goal).subGoal)
+              }
+
+              @Test fun partyAdvisorUsesPriorityAndHighestLevels() {
+                  val s = AccountState(characterLevels=mapOf("리사" to 20, "케이아" to 30, "치치" to 40, "여행자" to 35, "엠버" to 10))
+                  val p = PartyAdvisor.recommend(s, "치치")
+                  assertEquals("치치", p.first())
+                  assertEquals(4, p.size)
+              }
+
+              @Test fun lowConfidenceBlocksClicks() {
+                  assertFalse(ActionGate.canAct(AccountState(confidence=.59f), dryRun=false))
+              }
+
+              @Test fun wishScreenBlocksClicks() {
+                  assertFalse(ActionGate.canAct(AccountState(confidence=.95f, screen=ScreenType.WISH), dryRun=false))
+              }
+
+              @Test fun recoveryEscalates() {
+                  assertEquals(RecoveryStep.RETRACK_QUEST, RecoveryManager.step(3))
+                  assertEquals(RecoveryStep.SAFE_TELEPORT, RecoveryManager.step(7))
+              }
+
+              @Test fun combatPolicyDodgesAtLowHp() {
+                  assertEquals(CombatAction.DODGE, CombatPolicy.choose(hpPercent=20, burstReady=true, skillReady=true))
+                  assertEquals(CombatAction.BURST, CombatPolicy.choose(hpPercent=90, burstReady=true, skillReady=true))
+              }
+          }
+          EOT
+
+      - name: Confirm RED phase
+        shell: bash
+        run: |
+          set +e
+          gradle :app:testDebugUnitTest > red.log 2>&1
+          code=$?
+          tail -100 red.log
+          if [ "$code" -eq 0 ]; then
+            echo "RED phase unexpectedly passed"
+            exit 1
+          fi
+          echo "RED confirmed"
+
+      - name: Generate v1.1 implementation
+        shell: bash
+        run: |
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/Model.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          enum class AgentMode { SCAN, AUTOPLAY, PAUSED, COMPLETE, RECOVERY }
+          enum class ScreenType { WORLD, DIALOGUE, QUEST, MAP, PARTY, CHARACTER, BATTLE, LOADING, REWARD, WISH, DEATH, UNKNOWN }
+          enum class SubGoal {
+              SCAN_ACCOUNT, REACH_TARGET_AR, COMPLETE_PROLOGUE_3, ENTER_SNEZHNAYA_PREVIEW,
+              COMPLETE_ACT_1, COMPLETE_ACT_2, GROW_PRIORITY_CHARACTER, OPTIMIZE_PARTY, RECOVER, DONE
+          }
+          enum class RecoveryStep { RESCAN, BACK, RETRACK_QUEST, OPEN_MAP, SAFE_TELEPORT, PAUSE }
+          enum class CombatAction { ATTACK, SKILL, BURST, DODGE, RECOVER, NONE }
+
+          data class ParsedGoal(
+              val originalText:String="",
+              val autoPriority:Boolean=false,
+              val targetAr:Int?=null,
+              val targetPrologueAct:Int?=null,
+              val targetSnezhnayaPreview:Boolean=false,
+              val targetChapter7Act:Int?=null,
+              val priorityCharacter:String?=null,
+              val priorityCharacterLevel:Int?=null,
+              val preferStory:Boolean=true,
+              val lockPrimogems:Boolean=true,
+              val lockIntertwinedFates:Boolean=true,
+              val lockWishes:Boolean=true,
+              val stopWhenComplete:Boolean=true
+          )
+
+          data class AccountState(
+              val ar:Int?=null,
+              val prologueAct:Int=0,
+              val snezhnayaPreviewEntered:Boolean=false,
+              val act1Complete:Boolean=false,
+              val act2Complete:Boolean=false,
+              val screen:ScreenType=ScreenType.UNKNOWN,
+              val primogems:Int?=null,
+              val intertwinedFates:Int?=null,
+              val acquaintFates:Int?=null,
+              val mora:Int?=null,
+              val resin:Int?=null,
+              val characterLevels:Map<String,Int> = emptyMap(),
+              val partyNames:List<String> = emptyList(),
+              val miniMapDirection:Float?=null,
+              val confidence:Float=0f,
+              val hpPercent:Int=100,
+              val skillReady:Boolean=false,
+              val burstReady:Boolean=false,
+              val failures:Int=0,
+              val lastOcrText:String=""
+          )
+
+          data class Decision(val mode:AgentMode,val subGoal:SubGoal,val reason:String)
+
+          object RuntimeState {
+              @Volatile var account=AccountState()
+              @Volatile var parsedGoal=ParsedGoal(autoPriority=true)
+              @Volatile var mode=AgentMode.SCAN
+              @Volatile var dryRun=true
+              @Volatile var lastAction="Idle"
+              @Volatile var sessionStarted=0L
+              @Volatile var currentGoalText=""
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/GoalIntelligence.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          object GoalIntelligence {
+              private val knownCharacters=listOf("치치","미즈키","베스나","보다니챠","여행자","케이아","리사","엠버","바레사","모나")
+              fun parse(raw:String):ParsedGoal {
+                  val text=raw.trim()
+                  if(text.isBlank()) return ParsedGoal(originalText="",autoPriority=true)
+                  val ar=Regex("(?:AR|모험 ?등급)\\s*(\\d{1,2})",RegexOption.IGNORE_CASE).find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                  val prologue=when {
+                      Regex("프롤로그\\s*3막|프롤로그\\s*제?3막",RegexOption.IGNORE_CASE).containsMatchIn(text) -> 3
+                      Regex("프롤로그\\s*2막|프롤로그\\s*제?2막",RegexOption.IGNORE_CASE).containsMatchIn(text) -> 2
+                      else -> null
+                  }
+                  val act=Regex("7장\\s*(\\d)막").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                  val preview=text.contains("스네즈나야 미리보기") || text.contains("스네즈나야로 가")
+                  val character=knownCharacters.firstOrNull{text.contains(it)}
+                  val level=character?.let {
+                      Regex(Regex.escape(it)+".{0,12}?(\\d{1,3})\\s*레벨").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                          ?: Regex(Regex.escape(it)+".{0,12}?Lv\\.?\\s*(\\d{1,3})",RegexOption.IGNORE_CASE).find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                  }
+                  val storyFirst = !(text.contains("육성 우선") || text.contains("캐릭터 우선"))
+                  return ParsedGoal(
+                      originalText=text,
+                      autoPriority=false,
+                      targetAr=ar,
+                      targetPrologueAct=prologue,
+                      targetSnezhnayaPreview=preview || (act!=null),
+                      targetChapter7Act=act,
+                      priorityCharacter=character,
+                      priorityCharacterLevel=level,
+                      preferStory=storyFirst,
+                      lockPrimogems=!text.contains("원석 사용 허용"),
+                      lockIntertwinedFates=!text.contains("뒤얽힌 인연 사용 허용"),
+                      lockWishes=!text.contains("자동 가챠 허용"),
+                      stopWhenComplete=!text.contains("완료 후 계속")
+                  )
+              }
+
+              fun summarize(g:ParsedGoal):String {
+                  if(g.autoPriority) return "AUTO: 계정 상태를 분석해 스토리/AR/육성 우선순위를 자동 결정"
+                  val parts=mutableListOf<String>()
+                  g.targetAr?.let{parts+="AR "+it}
+                  g.targetPrologueAct?.let{parts+="프롤로그 "+it+"막"}
+                  if(g.targetSnezhnayaPreview) parts+="스네즈나야 미리보기"
+                  g.targetChapter7Act?.let{parts+="7장 "+it+"막"}
+                  g.priorityCharacter?.let{parts+="우선 육성 "+it+(g.priorityCharacterLevel?.let{lv->" Lv."+lv} ?: "")}
+                  if(g.lockWishes) parts+="자동 가챠 잠금"
+                  return parts.joinToString(" → ").ifBlank{"사용자 목표 분석 완료"}
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/Planner.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          object GoalPlanner {
+              fun next(s:AccountState,g:ParsedGoal):Decision {
+                  val ar=s.ar ?: return Decision(AgentMode.SCAN,SubGoal.SCAN_ACCOUNT,"AR/계정 상태 확인 필요")
+                  if(g.autoPriority) {
+                      if(ar<18) return Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"AUTO: AR18 우선")
+                      if(s.prologueAct<3) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_PROLOGUE_3,"AUTO: 프롤로그 3막")
+                      if(!s.snezhnayaPreviewEntered) return Decision(AgentMode.AUTOPLAY,SubGoal.ENTER_SNEZHNAYA_PREVIEW,"AUTO: 스네즈나야 미리보기")
+                      if(!s.act1Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_1,"AUTO: 7장 1막")
+                      if(!s.act2Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_2,"AUTO: 7장 2막")
+                      return Decision(AgentMode.COMPLETE,SubGoal.DONE,"AUTO 우선 루트 완료")
+                  }
+
+                  if(g.priorityCharacter!=null && g.priorityCharacterLevel!=null && !g.preferStory) {
+                      val lv=s.characterLevels[g.priorityCharacter] ?: 0
+                      if(lv<g.priorityCharacterLevel) return Decision(AgentMode.AUTOPLAY,SubGoal.GROW_PRIORITY_CHARACTER,"우선 육성 목표")
+                  }
+                  g.targetAr?.let{if(ar<it)return Decision(AgentMode.AUTOPLAY,SubGoal.REACH_TARGET_AR,"목표 AR "+it)}
+                  g.targetPrologueAct?.let{if(s.prologueAct<it)return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_PROLOGUE_3,"프롤로그 목표")}
+                  if(g.targetSnezhnayaPreview && !s.snezhnayaPreviewEntered) return Decision(AgentMode.AUTOPLAY,SubGoal.ENTER_SNEZHNAYA_PREVIEW,"스네즈나야 진입 목표")
+                  if((g.targetChapter7Act?:0)>=1 && !s.act1Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_1,"7장 1막 목표")
+                  if((g.targetChapter7Act?:0)>=2 && !s.act2Complete) return Decision(AgentMode.AUTOPLAY,SubGoal.COMPLETE_ACT_2,"7장 2막 목표")
+                  if(g.priorityCharacter!=null && g.priorityCharacterLevel!=null) {
+                      val lv=s.characterLevels[g.priorityCharacter] ?: 0
+                      if(lv<g.priorityCharacterLevel) return Decision(AgentMode.AUTOPLAY,SubGoal.GROW_PRIORITY_CHARACTER,"육성 목표")
+                  }
+                  return Decision(AgentMode.COMPLETE,SubGoal.DONE,"사용자 목표 완료")
+              }
+          }
+
+          object PartyAdvisor {
+              fun recommend(s:AccountState,priority:String?):List<String> {
+                  val sorted=s.characterLevels.entries.sortedByDescending{it.value}.map{it.key}.toMutableList()
+                  if(priority!=null && sorted.remove(priority)) sorted.add(0,priority)
+                  val defaults=listOf("치치","여행자","케이아","리사","엠버")
+                  defaults.forEach{if(it !in sorted && s.characterLevels.containsKey(it))sorted.add(it)}
+                  return sorted.distinct().take(4)
+              }
+          }
+
+          object ActionGate {
+              fun canAct(state:AccountState,dryRun:Boolean):Boolean =
+                  !dryRun && state.confidence>=.70f && state.screen!=ScreenType.WISH && state.screen!=ScreenType.LOADING
+          }
+
+          object RecoveryManager {
+              fun step(f:Int)=when {
+                  f<=1 -> RecoveryStep.RESCAN
+                  f<=2 -> RecoveryStep.BACK
+                  f<=4 -> RecoveryStep.RETRACK_QUEST
+                  f<=6 -> RecoveryStep.OPEN_MAP
+                  f<=8 -> RecoveryStep.SAFE_TELEPORT
+                  else -> RecoveryStep.PAUSE
+              }
+          }
+
+          object CombatPolicy {
+              fun choose(hpPercent:Int,burstReady:Boolean,skillReady:Boolean):CombatAction = when {
+                  hpPercent<=25 -> CombatAction.DODGE
+                  burstReady -> CombatAction.BURST
+                  skillReady -> CombatAction.SKILL
+                  else -> CombatAction.ATTACK
+              }
+          }
+
+          object LongRunGuard {
+              fun canContinue(batteryPercent:Int,thermalSevere:Boolean):Boolean = batteryPercent>=20 && !thermalSevere
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/ScreenInterpreter.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          object ScreenInterpreter {
+              private fun intValue(t:String,vararg keys:String):Int? {
+                  for(k in keys) {
+                      val m=Regex("(?:$k)\\s*[:：]?\\s*([0-9,]{1,9})",RegexOption.IGNORE_CASE).find(t)
+                      val v=m?.groupValues?.getOrNull(1)?.replace(",","")?.toIntOrNull()
+                      if(v!=null)return v
+                  }
+                  return null
+              }
+
+              fun fromText(raw:String):AccountState {
+                  val t=raw.replace("\n"," ")
+                  val old=RuntimeState.account
+                  val levels=old.characterLevels.toMutableMap()
+                  Regex("([가-힣A-Za-z][가-힣A-Za-z ]{0,15})\\s*(?:Lv\\.?|레벨)\\s*(\\d{1,3})",RegexOption.IGNORE_CASE)
+                      .findAll(t).forEach{levels[it.groupValues[1].trim()]=it.groupValues[2].toInt()}
+                  val screen=when {
+                      t.contains("기원",true)||t.contains("Wish",true)->ScreenType.WISH
+                      t.contains("대화",true)||t.contains("Dialogue",true)->ScreenType.DIALOGUE
+                      t.contains("임무",true)||t.contains("Quest",true)->ScreenType.QUEST
+                      t.contains("파티",true)||t.contains("Party",true)->ScreenType.PARTY
+                      t.contains("캐릭터",true)||t.contains("Character",true)->ScreenType.CHARACTER
+                      t.contains("지도",true)||t.contains("Map",true)->ScreenType.MAP
+                      t.contains("보상",true)||t.contains("Reward",true)->ScreenType.REWARD
+                      t.contains("사망",true)||t.contains("Revive",true)->ScreenType.DEATH
+                      else->ScreenType.WORLD
+                  }
+                  val p=when {
+                      t.contains("드래곤과 자유의 노래",true)||t.contains("Song of the Dragon",true)->3
+                      t.contains("프롤로그 제2막",true)||t.contains("Prologue Act II",true)->2
+                      t.contains("프롤로그 제1막",true)||t.contains("Prologue Act I",true)->1
+                      else->old.prologueAct
+                  }
+                  val preview=old.snezhnayaPreviewEntered||t.contains("스네즈나야",true)||t.contains("Snezhnaya",true)
+                  val a1=old.act1Complete||t.contains("7장 2막",true)||t.contains("Chapter VII Act II",true)
+                  val a2=old.act2Complete||t.contains("7장 2막 완료",true)||t.contains("Act II Complete",true)
+                  val hp=Regex("(\\d{1,3})\\s*%").find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(0,100) ?: old.hpPercent
+                  return old.copy(
+                      ar=intValue(t,"AR","모험 등급","Adventure Rank")?:old.ar,
+                      primogems=intValue(t,"원석","Primogems")?:old.primogems,
+                      mora=intValue(t,"모라","Mora")?:old.mora,
+                      resin=Regex("(?:레진|Resin)\\s*[:：]?\\s*(\\d{1,3})\\s*/",RegexOption.IGNORE_CASE).find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()?:old.resin,
+                      intertwinedFates=intValue(t,"뒤얽힌 인연","Intertwined Fate")?:old.intertwinedFates,
+                      acquaintFates=intValue(t,"만남의 인연","Acquaint Fate")?:old.acquaintFates,
+                      characterLevels=levels,screen=screen,prologueAct=p,snezhnayaPreviewEntered=preview,act1Complete=a1,act2Complete=a2,
+                      confidence=if(t.length>25).88f else if(t.isNotBlank()).74f else .2f,hpPercent=hp,lastOcrText=t.take(3000)
+                  )
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/MiniMapAnalyzer.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.graphics.Bitmap
+          import kotlin.math.atan2
+
+          object MiniMapAnalyzer {
+              fun questDirection(bitmap:Bitmap):Float? {
+                  val w=bitmap.width
+                  val h=bitmap.height
+                  val x1=(w*.34).toInt()
+                  val y1=(h*.34).toInt()
+                  var sx=0L;var sy=0L;var n=0
+                  for(y in 0 until y1 step 3) for(x in 0 until x1 step 3) {
+                      val c=bitmap.getPixel(x,y)
+                      val r=(c shr 16) and 255
+                      val g=(c shr 8) and 255
+                      val b=c and 255
+                      if(r>185 && g>145 && b<125 && r>g) { sx+=x;sy+=y;n++ }
+                  }
+                  if(n<8)return null
+                  val cx=sx.toFloat()/n
+                  val cy=sy.toFloat()/n
+                  return Math.toDegrees(atan2((cy-y1/2f).toDouble(),(cx-x1/2f).toDouble())).toFloat()
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AutopilotAccessibilityService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.accessibilityservice.AccessibilityService
+          import android.accessibilityservice.GestureDescription
+          import android.graphics.Path
+          import android.view.accessibility.AccessibilityEvent
+
+          class AutopilotAccessibilityService:AccessibilityService() {
+              companion object {@Volatile var instance:AutopilotAccessibilityService?=null}
+              override fun onServiceConnected(){instance=this}
+              override fun onDestroy(){if(instance===this)instance=null;super.onDestroy()}
+              override fun onAccessibilityEvent(event:AccessibilityEvent?)=Unit
+              override fun onInterrupt()=Unit
+              fun tap(x:Float,y:Float):Boolean {
+                  val p=Path().apply{moveTo(x,y)}
+                  return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,70)).build(),null,null)
+              }
+              fun swipe(x1:Float,y1:Float,x2:Float,y2:Float,ms:Long=420):Boolean {
+                  val p=Path().apply{moveTo(x1,y1);lineTo(x2,y2)}
+                  return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,ms)).build(),null,null)
+              }
+              fun back(){performGlobalAction(GLOBAL_ACTION_BACK)}
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/AgentController.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.content.res.Resources
+          import kotlin.math.cos
+          import kotlin.math.sin
+
+          object AgentController {
+              private var lastTick=0L
+              fun tick() {
+                  val now=System.currentTimeMillis()
+                  if(now-lastTick<650)return
+                  lastTick=now
+                  val s=RuntimeState.account
+                  val d=GoalPlanner.next(s,RuntimeState.parsedGoal)
+                  RuntimeState.mode=d.mode
+
+                  if(!ActionGate.canAct(s,RuntimeState.dryRun)) {
+                      RuntimeState.lastAction=d.reason+" [관찰 모드]"
+                      return
+                  }
+
+                  val svc=AutopilotAccessibilityService.instance ?: run {
+                      RuntimeState.lastAction="접근성 서비스 비활성"
+                      return
+                  }
+                  val dm=Resources.getSystem().displayMetrics
+                  val w=dm.widthPixels.toFloat()
+                  val h=dm.heightPixels.toFloat()
+
+                  if(s.screen==ScreenType.WISH) {
+                      RuntimeState.lastAction="가챠 화면: 정책에 의해 차단"
+                      return
+                  }
+                  if(s.screen==ScreenType.DIALOGUE) {
+                      svc.tap(w*.84f,h*.84f)
+                      RuntimeState.lastAction="대화 진행"
+                      return
+                  }
+                  if(s.screen==ScreenType.REWARD) {
+                      svc.tap(w*.50f,h*.84f)
+                      RuntimeState.lastAction="보상 화면 닫기"
+                      return
+                  }
+                  if(s.screen==ScreenType.DEATH) {
+                      svc.tap(w*.50f,h*.68f)
+                      RuntimeState.lastAction="부활/복구 시도"
+                      return
+                  }
+                  if(s.screen==ScreenType.BATTLE) {
+                      when(CombatPolicy.choose(s.hpPercent,s.burstReady,s.skillReady)) {
+                          CombatAction.DODGE -> svc.tap(w*.90f,h*.72f)
+                          CombatAction.BURST -> svc.tap(w*.83f,h*.78f)
+                          CombatAction.SKILL -> svc.tap(w*.76f,h*.68f)
+                          CombatAction.ATTACK -> svc.tap(w*.88f,h*.58f)
+                          else -> Unit
+                      }
+                      RuntimeState.lastAction="전투 정책 실행"
+                      return
+                  }
+                  val dir=s.miniMapDirection
+                  if(dir!=null && s.screen==ScreenType.WORLD) {
+                      val rad=Math.toRadians(dir.toDouble())
+                      val cx=w*.18f
+                      val cy=h*.78f
+                      val radius=w*.105f
+                      svc.swipe(cx,cy,cx+cos(rad).toFloat()*radius,cy+sin(rad).toFloat()*radius)
+                      RuntimeState.lastAction="퀘스트 마커 방향 이동"
+                      return
+                  }
+
+                  when(d.subGoal) {
+                      SubGoal.REACH_TARGET_AR,SubGoal.COMPLETE_PROLOGUE_3,SubGoal.COMPLETE_ACT_1,SubGoal.COMPLETE_ACT_2 -> {
+                          svc.tap(w*.84f,h*.50f); RuntimeState.lastAction="현재 추적 임무 진행"
+                      }
+                      SubGoal.ENTER_SNEZHNAYA_PREVIEW -> {
+                          svc.tap(w*.08f,h*.08f); RuntimeState.lastAction="임무/이동 UI 열기"
+                      }
+                      SubGoal.GROW_PRIORITY_CHARACTER -> {
+                          svc.tap(w*.09f,h*.09f); RuntimeState.lastAction="육성 메뉴 진입 시도"
+                      }
+                      SubGoal.OPTIMIZE_PARTY -> {
+                          svc.tap(w*.09f,h*.09f); RuntimeState.lastAction="파티 메뉴 진입 시도"
+                      }
+                      else -> RuntimeState.lastAction="상태 재분석"
+                  }
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/CaptureService.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.app.*
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.PixelFormat
+          import android.hardware.display.DisplayManager
+          import android.media.ImageReader
+          import android.media.projection.MediaProjection
+          import android.media.projection.MediaProjectionManager
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          import com.google.mlkit.vision.common.InputImage
+          import com.google.mlkit.vision.text.TextRecognition
+          import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+
+          class CaptureService:Service() {
+              private val recognizer=TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+              private var reader:ImageReader?=null
+              private var lastFrameAt=0L
+              override fun onBind(intent:Intent?):IBinder?=null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  getSystemService(NotificationManager::class.java)
+                      .createNotificationChannel(NotificationChannel("ga11","Genshin AutoPilot",NotificationManager.IMPORTANCE_LOW))
+              }
+
+              override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
+                  startForeground(11,Notification.Builder(this,"ga11")
+                      .setContentTitle("Genshin AutoPilot v1.1")
+                      .setContentText("Goal 분석 / 계정 스캔 / AutoPilot 실행 중")
+                      .setSmallIcon(android.R.drawable.ic_media_play).build())
+
+                  val code=intent?.getIntExtra("resultCode",Activity.RESULT_CANCELED)?:return START_NOT_STICKY
+                  val data=intent.getParcelableExtra<Intent>("data")?:return START_NOT_STICKY
+                  val mpm=getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  val projection=mpm.getMediaProjection(code,data)
+                  projection.registerCallback(object:MediaProjection.Callback(){override fun onStop(){reader?.close();reader=null}},Handler(Looper.getMainLooper()))
+                  val dm=resources.displayMetrics
+                  reader=ImageReader.newInstance(dm.widthPixels,dm.heightPixels,PixelFormat.RGBA_8888,2)
+                  projection.createVirtualDisplay("GA11",dm.widthPixels,dm.heightPixels,dm.densityDpi,
+                      DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader!!.surface,null,null)
+
+                  reader!!.setOnImageAvailableListener({r->
+                      val now=System.currentTimeMillis()
+                      if(now-lastFrameAt<800){r.acquireLatestImage()?.close();return@setOnImageAvailableListener}
+                      lastFrameAt=now
+                      val image=r.acquireLatestImage()?:return@setOnImageAvailableListener
+                      try {
+                          val p=image.planes[0]
+                          val pad=p.rowStride-p.pixelStride*image.width
+                          val bmp=Bitmap.createBitmap(image.width+pad/p.pixelStride,image.height,Bitmap.Config.ARGB_8888)
+                          bmp.copyPixelsFromBuffer(p.buffer)
+                          val cropped=Bitmap.createBitmap(bmp,0,0,image.width,image.height)
+                          val dir=MiniMapAnalyzer.questDirection(cropped)
+                          recognizer.process(InputImage.fromBitmap(cropped,0)).addOnSuccessListener{result->
+                              RuntimeState.account=ScreenInterpreter.fromText(result.text).copy(miniMapDirection=dir)
+                              AgentController.tick()
+                          }
+                      } finally { image.close() }
+                  },Handler(Looper.getMainLooper()))
+                  return START_STICKY
+              }
+          }
+          EOT
+
+          cat > app/src/main/java/com/seondwaeji/genshinautopilot/MainActivity.kt <<'EOT'
+          package com.seondwaeji.genshinautopilot
+
+          import android.content.*
+          import android.graphics.Color
+          import android.graphics.drawable.GradientDrawable
+          import android.media.projection.MediaProjectionManager
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.*
+          import android.widget.*
+          import androidx.activity.ComponentActivity
+          import androidx.activity.result.contract.ActivityResultContracts
+
+          class MainActivity:ComponentActivity() {
+              private lateinit var status:TextView
+              private lateinit var goalInput:EditText
+              private lateinit var analysis:TextView
+              private val prefs by lazy{getSharedPreferences("ga11",MODE_PRIVATE)}
+
+              private val captureLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){r->
+                  if(r.resultCode==RESULT_OK && r.data!=null) {
+                      startForegroundService(Intent(this,CaptureService::class.java)
+                          .putExtra("resultCode",r.resultCode).putExtra("data",r.data))
+                      RuntimeState.sessionStarted=System.currentTimeMillis()
+                      toast("화면 분석 시작")
+                      refresh()
+                  }
+              }
+
+              override fun onCreate(savedInstanceState:Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val bg=Color.rgb(8,11,22)
+                  val panel=Color.rgb(20,24,43)
+                  val accent=Color.rgb(140,140,255)
+                  val text=Color.rgb(238,240,255)
+
+                  val root=LinearLayout(this).apply {
+                      orientation=LinearLayout.VERTICAL
+                      setPadding(24,28,24,32)
+                      setBackgroundColor(bg)
+                  }
+
+                  root.addView(ImageView(this).apply {
+                      setImageResource(com.seondwaeji.genshinautopilot.R.drawable.autopilot_icon)
+                      scaleType=ImageView.ScaleType.CENTER_CROP
+                      adjustViewBounds=true
+                      layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(190)).apply{bottomMargin=14}
+                  })
+
+                  root.addView(TextView(this).apply {
+                      setTextColor(text);textSize=26f;text="GENSHIN AUTOPILOT  •  v1.1"
+                      setPadding(4,8,4,8)
+                  })
+                  root.addView(TextView(this).apply {
+                      setTextColor(Color.rgb(170,178,214));textSize=14f
+                      text="직접 목표를 쓰면 로컬 Goal Intelligence가 실행 계획으로 변환합니다. 비워두면 AUTO."
+                  })
+
+                  goalInput=EditText(this).apply {
+                      hint="예: AR18까지 올리고 프롤로그 3막을 깨. 치치를 40레벨 우선 육성. 원석은 쓰지 마."
+                      setHintTextColor(Color.rgb(125,132,165));setTextColor(text)
+                      minLines=3;maxLines=6;setPadding(18,16,18,16)
+                      background=rounded(panel,22f)
+                      setText(prefs.getString("goal_text",""))
+                  }
+                  root.addView(goalInput,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=16})
+
+                  val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+                  row.addView(button("목표 분석",accent){analyzeGoal()},LinearLayout.LayoutParams(0,dp(52),1f).apply{rightMargin=6})
+                  row.addView(button("목표 저장",Color.rgb(61,67,102)){saveGoal()},LinearLayout.LayoutParams(0,dp(52),1f).apply{leftMargin=6})
+                  root.addView(row,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=10})
+
+                  analysis=TextView(this).apply {
+                      setTextColor(text);textSize=15f;setPadding(16,16,16,16);background=rounded(panel,18f)
+                  }
+                  root.addView(analysis,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=12})
+
+                  status=TextView(this).apply {
+                      setTextColor(Color.rgb(205,211,240));textSize=14f;setPadding(16,16,16,16);background=rounded(panel,18f)
+                  }
+                  root.addView(status,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=12})
+
+                  root.addView(button("1. 접근성 서비스 열기",Color.rgb(51,59,92)){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))})
+                  root.addView(button("2. 화면 스캔 시작",Color.rgb(51,59,92)){startScan()})
+                  root.addView(button("DRY RUN ON / OFF",Color.rgb(51,59,92)){RuntimeState.dryRun=!RuntimeState.dryRun;refresh()})
+                  root.addView(button("AUTOPILOT START / TICK",accent){analyzeGoal();AgentController.tick();refresh()})
+                  root.addView(button("PAUSE / EMERGENCY STOP",Color.rgb(120,46,66)){RuntimeState.mode=AgentMode.PAUSED;RuntimeState.dryRun=true;refresh()})
+
+                  setContentView(ScrollView(this).apply{addView(root)})
+                  analyzeGoal()
+              }
+
+              private fun startScan() {
+                  analyzeGoal()
+                  val mpm=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  captureLauncher.launch(mpm.createScreenCaptureIntent())
+              }
+
+              private fun analyzeGoal() {
+                  val raw=goalInput.text?.toString().orEmpty()
+                  RuntimeState.currentGoalText=raw
+                  RuntimeState.parsedGoal=GoalIntelligence.parse(raw)
+                  analysis.text="AI GOAL ANALYSIS\n"+GoalIntelligence.summarize(RuntimeState.parsedGoal)
+                  refresh()
+              }
+
+              private fun saveGoal() {
+                  prefs.edit().putString("goal_text",goalInput.text?.toString().orEmpty()).apply()
+                  analyzeGoal()
+                  toast("Goal 저장 완료")
+              }
+
+              private fun refresh() {
+                  val s=RuntimeState.account
+                  val d=GoalPlanner.next(s,RuntimeState.parsedGoal)
+                  val party=PartyAdvisor.recommend(s,RuntimeState.parsedGoal.priorityCharacter)
+                  status.text=
+                      "MODE  "+RuntimeState.mode+
+                      "\nNEXT  "+d.subGoal+
+                      "\nWHY   "+d.reason+
+                      "\nAR    "+(s.ar?:"?")+
+                      "   PROLOGUE "+s.prologueAct+
+                      "\nSNEZHNAYA "+s.snezhnayaPreviewEntered+
+                      "   ACT1 "+s.act1Complete+"   ACT2 "+s.act2Complete+
+                      "\nSCREEN "+s.screen+"   CONF "+((s.confidence*100).toInt())+"%"+
+                      "\nMARKER "+(s.miniMapDirection?:"?")+
+                      "\nPRIMOGEMS "+(s.primogems?:"?")+"   MORA "+(s.mora?:"?")+"   RESIN "+(s.resin?:"?")+
+                      "\nPARTY ADVICE "+party.joinToString(" / ")+
+                      "\nDRY RUN "+RuntimeState.dryRun+
+                      "\nLAST  "+RuntimeState.lastAction+
+                      "\n\nWISH / PRIMOGEM SPENDING: LOCKED BY DEFAULT"
+              }
+
+              private fun button(label:String,color:Int,action:()->Unit)=Button(this).apply {
+                  text=label;isAllCaps=false;setTextColor(Color.WHITE);textSize=15f
+                  backgroundTintList=android.content.res.ColorStateList.valueOf(color)
+                  setOnClickListener{action()}
+                  layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(52)).apply{topMargin=10}
+              }
+              private fun rounded(color:Int,r:Float)=GradientDrawable().apply{setColor(color);cornerRadius=r}
+              private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
+              private fun toast(s:String)=Toast.makeText(this,s,Toast.LENGTH_SHORT).show()
+          }
+          EOT
+
+      - name: Unit tests GREEN
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Lint
+        run: gradle :app:lintDebug --stacktrace
+
+      - name: Build APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK and icon
+        shell: bash
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          test -s app/src/main/res/drawable-nodpi/autopilot_icon.jpg
+          ls -lh app/build/outputs/apk/debug/app-debug.apk app/src/main/res/drawable-nodpi/autopilot_icon.jpg
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenshinAutopilot-v1.1-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
