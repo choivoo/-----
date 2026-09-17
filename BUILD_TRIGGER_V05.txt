@@ -1,0 +1,1 @@
+Build Genshin Autopilot v0.5 via GitHub Actions.
