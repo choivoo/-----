@@ -38,6 +38,7 @@ jobs:
           mkdir -p build-src
           unzip -q duomorph-source.zip -d build-src
           test -f build-src/DuoMorphHome_1.0/settings.gradle.kts
+          cp ci_overrides/FoldRenderer.kt build-src/DuoMorphHome_1.0/app/src/main/java/com/sycompany/duomorph/FoldRenderer.kt
 
       - name: Build debug APK
         working-directory: build-src/DuoMorphHome_1.0
