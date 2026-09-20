@@ -7,9 +7,7 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.RenderEffect
 import android.graphics.Shader
-import android.os.Build
 import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.min
@@ -44,17 +42,6 @@ object FoldRenderer {
         val eased = ease(progress)
         val blurRadius = min(w, h) * 0.022f * s
         bitmapPaint.alpha = globalAlpha.coerceIn(0, 255)
-        if (Build.VERSION.SDK_INT >= 31 && blurRadius > 0.8f) {
-            bitmapPaint.setRenderEffect(
-                RenderEffect.createBlurEffect(
-                    blurRadius,
-                    blurRadius * 0.72f,
-                    Shader.TileMode.CLAMP
-                )
-            )
-        } else if (Build.VERSION.SDK_INT >= 31) {
-            bitmapPaint.setRenderEffect(null)
-        }
 
         val skew = (1f - eased) * (if (inner) -0.020f else 0.020f)
         val scaleX = 0.948f + 0.052f * eased
@@ -65,10 +52,27 @@ object FoldRenderer {
         canvas.scale(scaleX, scaleY)
         canvas.skew(skew, 0f)
         canvas.translate(-hingeX, -h * 0.5f)
-        canvas.drawBitmap(bitmap, null, RectF(0f, 0f, w, h), bitmapPaint)
+        val dst = RectF(0f, 0f, w, h)
+        if (blurRadius > 0.8f) {
+            val r = blurRadius * 0.42f
+            val taps = arrayOf(
+                -r to 0f, r to 0f, 0f to -r, 0f to r,
+                -r * 0.7f to -r * 0.7f, r * 0.7f to -r * 0.7f,
+                -r * 0.7f to r * 0.7f, r * 0.7f to r * 0.7f
+            )
+            bitmapPaint.alpha = (globalAlpha * 0.085f).toInt().coerceIn(0, 255)
+            for ((ox, oy) in taps) {
+                canvas.save()
+                canvas.translate(ox, oy)
+                canvas.drawBitmap(bitmap, null, dst, bitmapPaint)
+                canvas.restore()
+            }
+            bitmapPaint.alpha = (globalAlpha * (0.72f - 0.18f * s)).toInt().coerceIn(0, 255)
+        } else {
+            bitmapPaint.alpha = globalAlpha.coerceIn(0, 255)
+        }
+        canvas.drawBitmap(bitmap, null, dst, bitmapPaint)
         canvas.restore()
-
-        if (Build.VERSION.SDK_INT >= 31) bitmapPaint.setRenderEffect(null)
 
         val radius = w * (0.075f + 0.12f * s)
         val left = max(0f, hingeX - radius)
