@@ -1,0 +1,3 @@
+DuoMorph Home 1.0 build trigger
+Branch: duomorph-home-1.0
+Version: 1.0.0
